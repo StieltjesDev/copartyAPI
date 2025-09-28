@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 export async function getUsers(req, res, next) {
   try {
     const users = await User.find();
-    res.json(users);
+    res.json(users).status(200);
   } catch (err) {
     next(err);
   }
@@ -74,6 +74,17 @@ export async function deleteUser(req, res, next) {
     if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
 
     res.json({ message: `Usuário ${user.name} deletado com sucesso!` }).status(200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function findUserById(req, res, next) {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select("-password"); // não retornar a senha
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+    res.json(user).status(200);
   } catch (err) {
     next(err);
   }

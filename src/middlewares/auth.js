@@ -1,3 +1,6 @@
+import jwt from "jsonwebtoken";
+import { User } from "../models/User.js";
+
 export function authenticateToken(req, res, next) {
   const token = req.cookies?.token; // pega o cookie chamado "token"
 
@@ -10,9 +13,22 @@ export function authenticateToken(req, res, next) {
   });
 }
 
-export function authorizeAdmin(req, res, next) {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ error: "Acesso negado!" });
+export async function authorizeAdmin(req, res, next) {
+  try {
+    const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      return res.status(404).json({ error: "Usuário não encontrado" });
+    }
+
+    if (user.role !== "admin") {
+      return res.status(403).json({ error: "Acesso negado!" });
+    }
+
+    next();
+
+  } catch (e) {
+    return res.status(403).json({ error: "Token inválido", message: e.message});
   }
-  next();
 }
