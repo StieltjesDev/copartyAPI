@@ -5,7 +5,7 @@ import { createDeck, getDecks } from '../controllers/decksController.js';
 const router = Router();
 
 router.get('/', authenticateToken, authorizeAdmin, getDecks);
-router.post('/user', authenticateToken, createDeck);
+router.post('/user/:id', authenticateToken, createDeck);
 router.delete("/user/:id", authenticateToken);
 router.patch("/user/:id", authenticateToken);
 router.get("/user/:id", authenticateToken);

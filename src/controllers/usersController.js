@@ -1,5 +1,6 @@
 import { User } from "../models/User.js";
 import jwt from "jsonwebtoken";
+import { userData } from "../function/user.js";
 
 export async function getUsers(req, res, next) {
   try {
@@ -60,7 +61,8 @@ export async function loginUser(req, res, next) {
         sameSite: "strict", // proteção CSRF básica
         maxAge: 24 * 60 * 60 * 1000, // 1 dia
       })
-      .json({ message: "Login bem-sucedido!" }).status(200);
+      .json({ message: "Login bem-sucedido!" })
+      .status(200);
   } catch (err) {
     next(err);
   }
@@ -69,11 +71,17 @@ export async function loginUser(req, res, next) {
 export async function deleteUser(req, res, next) {
   try {
     const { id } = req.params;
-
-    const user = await User.findByIdAndDelete(id);
+    const userD = userData(req.cookies.token);
+    if (userD.role !== "admin" && userD.userId !== id ) return res.status(403).json({ error: "Ação não permitida!" });
+    
+    const user = await User.findOneAndDelete({ _id: id });
     if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
 
-    res.json({ message: `Usuário ${user.name} deletado com sucesso!` }).status(200);
+    return res
+      .status(200)
+      .json({
+        message: `Usuário ${user.name} e seus dados relacionados foram deletados com sucesso!`,
+      });
   } catch (err) {
     next(err);
   }

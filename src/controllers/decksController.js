@@ -12,29 +12,20 @@ export async function getDecks(req, res, next) {
 
 export async function createDeck(req, res, next) {
   try {
+    const { id } = req.params;
     const user = userData(req.cookies.token);
-    
-    if (user.userId === req.body.idUser) {
-      const deck = new Deck(req.body);
-      await deck.save();
 
-      return res.status(201).json({
-        id: deck._id,
-        commander: deck.commander,
-        link: deck.link,
-      });
-    }
-    if (user.role === "admin") {
-      const deck = new Deck(req.body);
-      await deck.save();
+    if (user.role !== "admin" && user.userId !== id)
+      return res.status(403).json({ error: "Ação não permitida!" });
 
-      return res.status(201).json({
-        id: deck._id,
-        commander: deck.commander,
-        link: deck.link,
-      });
-    }
-    return res.status(403).json({ error: "Ação não permitida!" });
+    const deck = new Deck(req.body);
+    await deck.save();
+
+    return res.status(201).json({
+      id: deck._id,
+      commander: deck.commander,
+      link: deck.link,
+    });
   } catch (err) {
     // Verifica erro de duplicidade (MongoDB code 11000)
     if (err.code === 11000) {
@@ -51,5 +42,3 @@ export async function createDeck(req, res, next) {
     next(err);
   }
 }
-
-

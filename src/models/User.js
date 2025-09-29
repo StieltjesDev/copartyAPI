@@ -24,6 +24,12 @@ userSchema.pre("save", async function (next) {
     }
 });
 
+userSchema.pre("findOneAndDelete", async function (next) {
+  const userId = this.getQuery()["_id"];
+  await mongoose.model("Deck").deleteMany({ idUser: userId });
+  next();
+});
+
 userSchema.methods.comparePassword = async function (candidatePassword) {
     return bcrypt.compare(candidatePassword, this.password);
 };
