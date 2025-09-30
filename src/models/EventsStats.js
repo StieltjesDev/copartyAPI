@@ -1,11 +1,6 @@
 import mongoose from 'mongoose';
 
 const eventsStatsSchema = new mongoose.Schema({
-    idUser: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: [true, "User é obrigatório"]
-    },
     idEvent: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Event',
