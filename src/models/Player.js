@@ -1,8 +1,7 @@
 import mongoose from 'mongoose';
 
-const deckSchema = new mongoose.Schema({
-    commander: { type: String, required: [true, "Comandante é obrigatório"]},
-    link: { type: String, required: [true, "Link é Obrigatório."] },
+const playerSchema = new mongoose.Schema({
+    points: { type: Number },
     win: { type: Number },
     losse: { type: Number },
     tie: { type: Number },
@@ -14,4 +13,4 @@ const deckSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 
-export const Deck = mongoose.model("Deck", deckSchema);
+export const Player = mongoose.model("Player", playerSchema);

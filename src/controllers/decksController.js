@@ -10,14 +10,31 @@ export async function getDecks(req, res, next) {
   }
 }
 
-export async function createDeck(req, res, next) {
+export async function findDecksByUserId(req, res, next) {
   try {
-    const { id } = req.params;
     const user = userData(req.cookies.token);
+    const id = req.params.id ? req.params.id : user.userId;
 
     if (user.role !== "admin" && user.userId !== id)
       return res.status(403).json({ error: "Ação não permitida!" });
 
+    const deck = await Deck.find({ idUser: id });
+    if (!deck) return res.status(404).json({ error: "Nenhum deck encontrado" });
+    res.json(deck).status(200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function createDeck(req, res, next) {
+  try {
+    const user = userData(req.cookies.token);
+    const id = req.params.id ? req.params.id : user.userId;
+
+    if (user.role !== "admin" && user.userId !== id)
+      return res.status(403).json({ error: "Ação não permitida!" });
+
+    req.body.idUser = id;
     const deck = new Deck(req.body);
     await deck.save();
 
@@ -39,6 +56,46 @@ export async function createDeck(req, res, next) {
       return res.status(400).json({ errors: messages });
     }
 
+    next(err);
+  }
+}
+
+export async function putDeck(req, res, next) {
+  try {
+    const user = userData(req.cookies.token);
+    const id = req.params.id;
+    if (!id)
+      return res.status(400).json({ error: "ID do deck é obrigatório!" });
+    delete req.body.idUser; // previne mudança de dono do deck
+
+    if (user.role !== "admin" && user.userId !== id)
+      return res.status(403).json({ error: "Ação não permitida!" });
+
+    const deck = await Deck.up(id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!deck) return res.status(404).json({ error: "Deck não encontrado" });
+    return res.json(deck).status(200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteDeck(req, res, next) {
+  try {
+    const user = userData(req.cookies.token);
+    const id = req.params.id;
+    if (!id)
+      return res.status(400).json({ error: "ID do deck é obrigatório!" });
+
+    if (user.role !== "admin" && user.userId !== id)
+      return res.status(403).json({ error: "Ação não permitida!" });
+
+    const deck = await Deck.findByIdAndDelete(id);
+    if (!deck) return res.status(404).json({ error: "Deck não encontrado" });
+    return res.json({ message: "Deck deletado com sucesso!" }).status(200);
+  } catch (err) {
     next(err);
   }
 }
