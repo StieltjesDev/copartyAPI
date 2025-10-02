@@ -10,6 +10,16 @@ const playerSchema = new mongoose.Schema({
         ref: 'User',
         required: [true, "Usuário é obrigatório"]
     },
+    idEvent: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Event',
+        required: [true, "Event é obrigatório"]
+    },
+    idDeck: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Deck',
+        required: [true, "Deck é obrigatório"]
+    }
 }, { timestamps: true });
 
 

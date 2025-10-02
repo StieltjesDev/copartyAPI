@@ -6,6 +6,6 @@ import events from './events.js';
 const router = Router();
 router.use('/decks', decks);
 router.use('/users', users);
-router.use('/events', event);
+router.use('/events', events);
 
 export default router;

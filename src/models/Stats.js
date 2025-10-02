@@ -1,15 +1,11 @@
 import mongoose from "mongoose";
 
-const gamemodeStatsSchema = new mongoose.Schema(
+const StatsSchema = new mongoose.Schema(
   {
     win: { type: Number },
     losse: { type: Number },
     tie: { type: Number },
-    idGamemode: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Gamemode",
-      required: [true, "Gamemode é obrigatório"],
-    },
+    type: { type: String, enum: ["gamemode", "deck", "paring"] },
     idUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -19,7 +15,7 @@ const gamemodeStatsSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export const GamemodeStats = mongoose.model(
-  "GamemodeStats",
-  gamemodeStatsSchema
+export const Stats = mongoose.model(
+  "Stats",
+  StatsSchema
 );
