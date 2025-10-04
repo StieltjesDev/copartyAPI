@@ -150,5 +150,23 @@ export async function postEnterEvent (req, res, next) {
   } catch (err) { 
     next(err);  
   }
+}
 
+export async function postLeaveEvent (req, res, next) {
+  try {
+    const user = userData(req.cookies.token);
+    const id = req.params.id;
+    if (!id)
+      return res.status(400).json({ error: "ID do Event é obrigatório!" });
+    const event = await Event.findById(id);
+    if (!event) return res.status(404).json({ error: "Event não encontrado" });
+    if (event.dateTime < new Date())
+      return res.status(400).json({ error: "Event já ocorreu" });
+    const player = await Player.findOneAndDelete({ idUser: user.userId, idEvent: id });
+    if (!player)
+      return res.status(404).json({ error: "Usuário não inscrito no Event" });
+    return res.json({ message: "Inscrição cancelada com sucesso!" }).status(200);
+  } catch (err) {
+    next(err);
+  }
 }
