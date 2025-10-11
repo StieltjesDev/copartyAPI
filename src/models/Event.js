@@ -5,6 +5,7 @@ const eventSchema = new mongoose.Schema(
     name: { type: String, required: [true, "Nome é obrigatorio"] },
     description: { type: String },
     dateTime: { type: Date, required: [true, "Data e hora é obrigatorio"] },
+    local: { type: String, required: [true, "Local é Obrigatório"] },
     status: {
       type: String,
       enum: ["scheduled", "ongoing", "completed"],
@@ -31,6 +32,7 @@ const eventSchema = new mongoose.Schema(
         "commander500",
         "commander250",
         "commander15",
+        "commander2",
         "commander imperial",
         "commander gigant of two heads",
         "brawl",

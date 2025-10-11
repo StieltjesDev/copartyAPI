@@ -10,6 +10,15 @@ export async function getDecks(req, res, next) {
   }
 }
 
+export async function getDeckById(req, res, next) {
+  try {
+    const deck = await Deck.findById(req.params.id);
+    res.json(deck).status(200);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function findDecksByUserId(req, res, next) {
   try {
     const user = userData(req.cookies.token);
@@ -40,7 +49,8 @@ export async function createDeck(req, res, next) {
 
     return res.status(201).json({
       id: deck._id,
-      commander: deck.commander,
+      name: deck.name,
+      commander: deck?.commander,
       link: deck.link,
     });
   } catch (err) {
@@ -71,7 +81,7 @@ export async function putDeck(req, res, next) {
     if (user.role !== "admin" && user.userId !== id)
       return res.status(403).json({ error: "Ação não permitida!" });
 
-    const deck = await Deck.up(id, req.body, {
+    const deck = await Deck.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     });

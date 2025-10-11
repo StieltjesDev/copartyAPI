@@ -5,7 +5,16 @@ import { Player } from "../models/Player.js";
 export async function getEvents(req, res, next) {
   try {
     const events = await Event.find();
-    res.json(events).status(200);
+
+    // Promise.all para contar players de cada evento
+    const result = await Promise.all(
+      events.map(async (event) => {
+        const qntPlayers = await Player.countDocuments({ event: event._id });
+        return { ...event.toObject(), qntPlayers };
+      })
+    );
+
+    res.status(200).json(result);
   } catch (err) {
     next(err);
   }
@@ -19,7 +28,7 @@ export async function findEventsByUserId(req, res, next) {
     if (user.role !== "admin" && user.userId !== id)
       return res.status(403).json({ error: "Ação não permitida!" });
 
-    const event = await event.find({ idUser: id });
+    const event = await Event.find({ idUser: id });
     if (!event)
       return res.status(404).json({ error: "Nenhum Event encontrado" });
     res.json(event).status(200);
@@ -38,7 +47,7 @@ export async function createEvent(req, res, next) {
 
     req.body.idUser = id;
     const event = new Event(req.body);
-    await event.save();
+    await Event.save();
 
     return res.status(201).json({
       id: event._id,
@@ -72,7 +81,10 @@ export async function putEvent(req, res, next) {
     if (user.role !== "admin" && user.userId !== id)
       return res.status(403).json({ error: "Ação não permitida!" });
 
-    const event = await event.up(id, req.body, {
+    const ev = await Event.findById(id);
+    if (ev.status == "ongoing" || ev.status == "completed") 
+      return res.status(403).json({ error: "Ação não permitida! Evento já terminou ou esta ocorrendo!" });
+    const event = await Event.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     });
@@ -93,7 +105,7 @@ export async function deleteEvent(req, res, next) {
     if (user.role !== "admin" && user.userId !== id)
       return res.status(403).json({ error: "Ação não permitida!" });
 
-    const event = await event.findByIdAndDelete(id);
+    const event = await Event.findByIdAndDelete(id);
     if (!event) return res.status(404).json({ error: "Event não encontrado" });
     return res.json({ message: "Event deletado com sucesso!" }).status(200);
   } catch (err) {
@@ -109,7 +121,7 @@ export async function getEventById(req, res, next) {
       return res.status(400).json({ error: "ID do Event é obrigatório!" });
     if (user.role !== "admin" && user.userId !== id)
       return res.status(403).json({ error: "Ação não permitida!" }); 
-    const event = await event.findById(id);
+    const event = await Event.findById(id);
     if (!event) return res.status(404).json({ error: "Event não encontrado" });
     return res.json(event).status(200);
   } catch (err) {
@@ -152,7 +164,7 @@ export async function postEnterEvent (req, res, next) {
   }
 }
 
-export async function postLeaveEvent (req, res, next) {
+export async function deleteLeaveEvent (req, res, next) {
   try {
     const user = userData(req.cookies.token);
     const id = req.params.id;
@@ -166,6 +178,20 @@ export async function postLeaveEvent (req, res, next) {
     if (!player)
       return res.status(404).json({ error: "Usuário não inscrito no Event" });
     return res.json({ message: "Inscrição cancelada com sucesso!" }).status(200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getPlayers(req, res, next) {
+  try {
+    const { eventId } = req.params;
+
+    const players = await Player.find({ idEvent: eventId })
+      .populate("idDeck", "name") // popula o usuário (só o nome)
+      .populate("idUser", "name"); // popula o deck (só o nome)
+
+    res.status(200).json(players);
   } catch (err) {
     next(err);
   }

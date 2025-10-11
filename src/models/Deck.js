@@ -1,8 +1,9 @@
 import mongoose from 'mongoose';
 
 const deckSchema = new mongoose.Schema({
-    commander: { type: String, required: [true, "Comandante é obrigatório"]},
+    name: { type: String, required: [true, "Nome é obrigatório"]},
     link: { type: String, required: [true, "Link é Obrigatório."] },
+    commander: { type: String },
     win: { type: Number },
     losse: { type: Number },
     tie: { type: Number },

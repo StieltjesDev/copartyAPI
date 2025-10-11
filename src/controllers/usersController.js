@@ -97,3 +97,13 @@ export async function findUserById(req, res, next) {
     next(err);
   }
 }
+
+export async function checkAuth(req, res, next) {
+  try {
+    const userD = userData(req.cookies.token);
+    if (!userD) return res.status(401).json({ error: "Não autenticado" });
+    res.status(200).json({ message: "Autenticado" });
+  } catch (err) {
+    next(err);
+  }
+}

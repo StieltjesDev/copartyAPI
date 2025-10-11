@@ -3,12 +3,19 @@ import dotenv from 'dotenv';
 import routes from './routes/index.js';
 import cookieParser from 'cookie-parser';
 import { connectDB } from './db/mongo.js';
+import cors from 'cors'
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(
+  cors({
+    origin: 'http://localhost:5173', 
+    credentials: true,               
+  })
+)
 app.use(express.json());
 app.use(cookieParser());
 // rotas
