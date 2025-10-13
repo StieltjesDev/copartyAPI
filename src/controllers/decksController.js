@@ -45,6 +45,7 @@ export async function createDeck(req, res, next) {
 
     req.body.idUser = id;
     const deck = new Deck(req.body);
+    if(deck.name.length > 30 || deck.commander.length > 40 || deck.link.length > 60) return res.status(400).json({ error: "Deck Inválido!" });
     await deck.save();
 
     return res.status(201).json({
