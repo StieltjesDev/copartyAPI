@@ -1,6 +1,6 @@
 import { User } from "../models/User.js";
 import jwt from "jsonwebtoken";
-import { userData } from "../function/user.js";
+import { userData } from "../service/user.js";
 
 export async function getUsers(req, res, next) {
   try {

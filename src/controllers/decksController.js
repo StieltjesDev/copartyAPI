@@ -1,4 +1,4 @@
-import { userData } from "../function/user.js";
+import { userData } from "../service/user.js";
 import { Deck } from "../models/Deck.js";
 
 export async function getDecks(req, res, next) {

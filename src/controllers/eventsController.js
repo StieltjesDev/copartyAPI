@@ -1,4 +1,4 @@
-import { userData } from "../function/user.js";
+import { userData } from "../service/user.js";
 import { Event } from "../models/Event.js";
 import { Player } from "../models/Player.js";
 
