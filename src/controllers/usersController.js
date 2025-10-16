@@ -58,7 +58,7 @@ export async function loginUser(req, res, next) {
       .cookie("token", token, {
         httpOnly: true, // front-end não consegue acessar via JS
         secure: process.env.NODE_ENV === "production", // só https
-        sameSite: "strict", // proteção CSRF básica
+        sameSite: "none", // proteção CSRF básica
         maxAge: 24 * 60 * 60 * 1000, // 1 dia
       })
       .json({ message: "Login bem-sucedido!" })
