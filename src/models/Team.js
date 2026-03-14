@@ -1,15 +1,22 @@
 import mongoose from "mongoose";
 
-const teamPlayerSchema = new mongoose.Schema(
+const teamSchema = new mongoose.Schema(
   {
-    name: { type: String, required: [true, "Nome é obrigatório"] },
-    idEvent: {
+    eventId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Team",
-      required: [true, "Team é obrigatório"],
+      ref: "Event",
+      required: [true, "Event e obrigatorio"],
+    },
+    name: {
+      type: String,
+      required: [true, "Nome e obrigatorio"],
+      trim: true,
+      maxlength: [80, "Nome precisa ter no maximo 80 caracteres"],
     },
   },
   { timestamps: true }
 );
 
-export const TeamPlayer = mongoose.model("teamPlayer", teamPlayerSchema);
+teamSchema.index({ eventId: 1, name: 1 }, { unique: true });
+
+export const Team = mongoose.model("Team", teamSchema);

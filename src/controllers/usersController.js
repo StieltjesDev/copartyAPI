@@ -1,11 +1,22 @@
-import { User } from "../models/User.js";
 import jwt from "jsonwebtoken";
-import { userData } from "../service/user.js";
+import { User } from "../models/User.js";
+import { configurationError, forbiddenError, invalidStateError, notFoundError, validationError } from "../lib/errors.js";
+import { requireFields } from "../lib/validation.js";
+
+function formatUser(user) {
+  return {
+    id: user._id,
+    username: user.username,
+    email: user.email ?? null,
+    role: user.role,
+    createdAt: user.createdAt,
+  };
+}
 
 export async function getUsers(req, res, next) {
   try {
-    const users = await User.find();
-    res.json(users).status(200);
+    const users = await User.find().select("username email role createdAt");
+    res.status(200).json(users.map(formatUser));
   } catch (err) {
     next(err);
   }
@@ -13,25 +24,25 @@ export async function getUsers(req, res, next) {
 
 export async function createUser(req, res, next) {
   try {
-    const user = new User(req.body);
-    await user.save();
+    requireFields(req.body, ["username", "password"]);
+    const { username, email, password, role } = req.body;
 
-    res.status(201).json({
-      id: user._id,
-      name: user.name,
-      email: user.email,
-    });
-  } catch (err) {
-    // Verifica erro de duplicidade (MongoDB code 11000)
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern)[0]; // campo duplicado
-      return res.status(400).json({ error: `${field} já cadastrado!` });
+    const user = new User({ username, email, role });
+
+    if (password) {
+      user.password = password;
     }
 
-    // Erros de validação do schema
+    await user.save();
+    res.status(201).json(formatUser(user));
+  } catch (err) {
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyPattern)[0];
+      throw validationError(`${field} ja cadastrado!`);
+    }
+
     if (err.name === "ValidationError") {
-      const messages = Object.values(err.errors).map((e) => e.message);
-      return res.status(400).json({ errors: messages });
+      throw validationError("Falha de validacao", Object.values(err.errors).map((error) => error.message));
     }
 
     next(err);
@@ -40,29 +51,72 @@ export async function createUser(req, res, next) {
 
 export async function loginUser(req, res, next) {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
-    if (!user)
-      return res.status(400).json({ error: "Usuário não encontrado!" });
+    requireFields(req.body, ["password"]);
+    const { login, email, username, password } = req.body;
+    if (!login && !email && !username) {
+      throw validationError("Informe login, email ou username");
+    }
+    const filters = [];
+
+    if (email) filters.push({ email });
+    if (username) filters.push({ username });
+    if (login) {
+      filters.push({ email: login }, { username: login });
+    }
+
+    const user = await User.findOne({ $or: filters }).select("+passwordHash");
+
+    if (!user) {
+      throw notFoundError("Usuario nao encontrado!");
+    }
+
+    if (!user.passwordHash) {
+      throw invalidStateError("Usuario sem hash de senha cadastrado");
+    }
 
     const isValid = await user.comparePassword(password);
-    if (!isValid) return res.status(400).json({ error: "Senha incorreta!" });
+    if (!isValid) {
+      throw forbiddenError("Senha incorreta!");
+    }
+
+    if (!process.env.JWT_SECRET) {
+      throw configurationError("JWT_SECRET nao configurado");
+    }
+
     const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
+      { userId: user._id.toString(), username: user.username, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
 
-    // enviar token como cookie seguro
+    const isProduction = process.env.NODE_ENV === "production";
+
     res
       .cookie("token", token, {
-        httpOnly: true, // front-end não consegue acessar via JS
-        secure: process.env.NODE_ENV === "production", // só https
-        sameSite: "none", // proteção CSRF básica
-        maxAge: 24 * 60 * 60 * 1000, // 1 dia
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? "none" : "lax",
+        maxAge: 24 * 60 * 60 * 1000,
       })
-      .json({ message: "Login bem-sucedido!" })
-      .status(200);
+      .status(200)
+      .json({ message: "Login bem-sucedido!", user: formatUser(user) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function logoutUser(req, res, next) {
+  try {
+    const isProduction = process.env.NODE_ENV === "production";
+
+    res
+      .clearCookie("token", {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? "none" : "lax",
+      })
+      .status(200)
+      .json({ message: "Logout realizado com sucesso!" });
   } catch (err) {
     next(err);
   }
@@ -71,17 +125,19 @@ export async function loginUser(req, res, next) {
 export async function deleteUser(req, res, next) {
   try {
     const { id } = req.params;
-    const userD = userData(req.cookies.token);
-    if (userD.role !== "admin" && userD.userId !== id ) return res.status(403).json({ error: "Ação não permitida!" });
-    
-    const user = await User.findOneAndDelete({ _id: id });
-    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
 
-    return res
-      .status(200)
-      .json({
-        message: `Usuário ${user.name} e seus dados relacionados foram deletados com sucesso!`,
-      });
+    if (req.user.role !== "admin" && req.user.userId !== id) {
+      throw forbiddenError("Acao nao permitida!");
+    }
+
+    const user = await User.findOneAndDelete({ _id: id });
+    if (!user) {
+      throw notFoundError("Usuario nao encontrado");
+    }
+
+    return res.status(200).json({
+      message: `Usuario ${user.username} e seus dados relacionados foram deletados com sucesso!`,
+    });
   } catch (err) {
     next(err);
   }
@@ -90,9 +146,17 @@ export async function deleteUser(req, res, next) {
 export async function findUserById(req, res, next) {
   try {
     const { id } = req.params;
-    const user = await User.findById(id).select("-password"); // não retornar a senha
-    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
-    res.json(user).status(200);
+
+    if (req.user.role !== "admin" && req.user.userId !== id) {
+      throw forbiddenError("Acao nao permitida!");
+    }
+
+    const user = await User.findById(id).select("username email role createdAt");
+    if (!user) {
+      throw notFoundError("Usuario nao encontrado");
+    }
+
+    res.status(200).json(formatUser(user));
   } catch (err) {
     next(err);
   }
@@ -100,9 +164,13 @@ export async function findUserById(req, res, next) {
 
 export async function checkAuth(req, res, next) {
   try {
-    const userD = userData(req.cookies.token);
-    if (!userD) return res.status(401).json({ error: "Não autenticado" });
-    res.status(200).json({ message: "Autenticado" });
+    const user = await User.findById(req.user.userId).select("username email role createdAt");
+
+    if (!user) {
+      throw forbiddenError("Nao autenticado");
+    }
+
+    res.status(200).json({ message: "Autenticado", user: formatUser(user) });
   } catch (err) {
     next(err);
   }

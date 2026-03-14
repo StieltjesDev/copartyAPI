@@ -1,0 +1,68 @@
+export const USER_ROLES = ["admin", "user"];
+
+export const DECK_FORMATS = [
+  "STANDARD",
+  "MODERN",
+  "PIONEER",
+  "LEGACY",
+  "VINTAGE",
+  "PAUPER",
+  "BRAWL",
+  "HISTORIC",
+  "COMMANDER",
+  "COMMANDER_DUEL",
+  "COMMANDER_500",
+  "COMMANDER_250",
+  "COMMANDER_15",
+  "CUSTOM",
+];
+
+export const EVENT_PAIRING_TYPES = [
+  "SWISS",
+  "ROUND_ROBIN",
+  "SINGLE_ELIMINATION",
+  "DOUBLE_ELIMINATION",
+  "POD",
+];
+
+export const EVENT_STATUSES = [
+  "DRAFT",
+  "SCHEDULED",
+  "ONGOING",
+  "COMPLETED",
+  "CANCELLED",
+];
+
+export const EVENT_GAME_MODES = [
+  "ONE_VS_ONE",
+  "TWO_VS_TWO",
+  "COMMANDER_MULTIPLAYER",
+  "TWO_HEADED_GIANT",
+  "MULTIPLAYER_FREE_FOR_ALL",
+];
+
+export const EVENT_ENTRY_TYPES = ["PLAYER", "TEAM"];
+
+export const EVENT_ENTRY_STATUSES = [
+  "REGISTERED",
+  "CHECKED_IN",
+  "DROPPED",
+  "DISQUALIFIED",
+];
+
+export const MATCH_STATUSES = [
+  "PENDING",
+  "ONGOING",
+  "COMPLETED",
+  "CANCELLED",
+];
+
+export const MATCH_RESULT_TYPES = [
+  "WIN",
+  "LOSS",
+  "DRAW",
+  "BYE",
+  "ELIMINATED",
+];
+
+export const RATING_TYPES = ["PLAYER", "DECK"];

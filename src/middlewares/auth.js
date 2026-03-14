@@ -1,34 +1,46 @@
 import jwt from "jsonwebtoken";
 import { User } from "../models/User.js";
+import { configurationError, forbiddenError, notFoundError } from "../lib/errors.js";
 
 export function authenticateToken(req, res, next) {
-  const token = req.cookies?.token; // pega o cookie chamado "token"
+  const token = req.cookies?.token;
 
-  if (!token) return res.status(401).json({ error: "Token não fornecido" });
+  if (!token) {
+    return next(forbiddenError("Token nao fornecido"));
+  }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: "Token inválido" });
-    req.user = user;
+  if (!process.env.JWT_SECRET) {
+    return next(configurationError("JWT_SECRET nao configurado"));
+  }
+
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
-  });
+  } catch {
+    return next(forbiddenError("Token invalido"));
+  }
 }
 
 export async function authorizeAdmin(req, res, next) {
   try {
-    const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId);
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      throw forbiddenError("Nao autenticado");
+    }
+
+    const user = await User.findById(userId).select("role");
 
     if (!user) {
-      return res.status(404).json({ error: "Usuário não encontrado" });
+      throw notFoundError("Usuario nao encontrado");
     }
 
     if (user.role !== "admin") {
-      return res.status(403).json({ error: "Acesso negado!" });
+      throw forbiddenError("Acesso negado!");
     }
 
     next();
-
-  } catch (e) {
-    return res.status(403).json({ error: "Token inválido", message: e.message});
+  } catch (error) {
+    next(error);
   }
 }

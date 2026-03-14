@@ -1,15 +1,41 @@
-import { userData } from "../service/user.js";
+import { Deck } from "../models/Deck.js";
 import { Event } from "../models/Event.js";
+import { EventEntry } from "../models/EventEntry.js";
 import { Player } from "../models/Player.js";
+import {
+  cancelEvent,
+  closeRound,
+  finishEvent,
+  generateRound,
+  getEventStandings,
+  getRoundMatches,
+  startEvent,
+  syncEventLifecycle,
+  syncEventsLifecycle,
+} from "../service/event.js";
+import { listMatchesByEvent } from "../service/match.js";
+import { forbiddenError, notFoundError, validationError } from "../lib/errors.js";
+import { parsePositiveInteger, requireFields } from "../lib/validation.js";
+
+async function ensureOrganizerOrAdmin(userId, role, eventId) {
+  const event = await Event.findById(eventId).select("createdByUserId").lean();
+  if (!event) {
+    throw notFoundError("Event nao encontrado");
+  }
+
+  if (role !== "admin" && String(event.createdByUserId) !== String(userId)) {
+    throw forbiddenError("Apenas o organizador do evento ou admin pode alterar rodadas");
+  }
+}
 
 export async function getEvents(req, res, next) {
   try {
     const events = await Event.find();
+    await syncEventsLifecycle(events);
 
-    // Promise.all para contar players de cada evento
     const result = await Promise.all(
       events.map(async (event) => {
-        const qntPlayers = await Player.countDocuments({ event: event._id });
+        const qntPlayers = await EventEntry.countDocuments({ eventId: event._id });
         return { ...event.toObject(), qntPlayers };
       })
     );
@@ -22,16 +48,15 @@ export async function getEvents(req, res, next) {
 
 export async function findEventsByUserId(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
-    const id = req.params.id ? req.params.id : user.userId;
+    const id = req.params.id ?? req.user.userId;
 
-    if (user.role !== "admin" && user.userId !== id)
-      return res.status(403).json({ error: "Ação não permitida!" });
+    if (req.user.role !== "admin" && req.user.userId !== id) {
+      throw forbiddenError("Acao nao permitida!");
+    }
 
-    const event = await Event.find({ idUser: id });
-    if (!event)
-      return res.status(404).json({ error: "Nenhum Event encontrado" });
-    res.json(event).status(200);
+    const events = await Event.find({ createdByUserId: id });
+    await syncEventsLifecycle(events);
+    res.status(200).json(events);
   } catch (err) {
     next(err);
   }
@@ -39,31 +64,34 @@ export async function findEventsByUserId(req, res, next) {
 
 export async function createEvent(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
-    const id = req.params.id ? req.params.id : user.userId;
+    requireFields(req.body, ["name", "dateTime", "pairingType", "gameMode"]);
+    const dateTime = new Date(req.body.dateTime);
+    if (Number.isNaN(dateTime.getTime())) {
+      throw validationError("Data e hora invalidas");
+    }
 
-    if (user.role !== "admin" && user.userId !== id)
-      return res.status(403).json({ error: "Ação não permitida!" });
+    const isDraft = Boolean(req.body.isDraft);
+    if (!isDraft && dateTime < new Date()) {
+      throw validationError("Evento agendado precisa ter data futura");
+    }
 
-    req.body.idUser = id;
-    const event = new Event(req.body);
-    await Event.save();
+    const event = new Event({
+      ...req.body,
+      status: isDraft ? "DRAFT" : "SCHEDULED",
+      dateTime,
+      createdByUserId: req.user.userId,
+    });
+
+    await event.save();
 
     return res.status(201).json({
       id: event._id,
       message: "Event criado com sucesso!",
     });
   } catch (err) {
-    // Verifica erro de duplicidade (MongoDB code 11000)
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern)[0]; // campo duplicado
-      return res.status(400).json({ error: `${field} já cadastrado!` });
-    }
-
-    // Erros de validação do schema
     if (err.name === "ValidationError") {
-      const messages = Object.values(err.errors).map((e) => e.message);
-      return res.status(400).json({ errors: messages });
+      const messages = Object.values(err.errors).map((error) => error.message);
+      throw validationError("Falha de validacao", messages);
     }
 
     next(err);
@@ -72,24 +100,44 @@ export async function createEvent(req, res, next) {
 
 export async function putEvent(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
     const id = req.params.id;
-    if (!id)
-      return res.status(400).json({ error: "ID do Event é obrigatório!" });
-    delete req.body.idUser; // previne mudança de dono do Event
 
-    if (user.role !== "admin" && user.userId !== id)
-      return res.status(403).json({ error: "Ação não permitida!" });
+    if (!id) {
+      throw validationError("ID do Event e obrigatorio!");
+    }
 
-    const ev = await Event.findById(id);
-    if (ev.status == "ongoing" || ev.status == "completed") 
-      return res.status(403).json({ error: "Ação não permitida! Evento já terminou ou esta ocorrendo!" });
-    const event = await Event.findByIdAndUpdate(id, req.body, {
+    delete req.body.createdByUserId;
+    delete req.body.status;
+    delete req.body.isDraft;
+
+    const event = await syncEventLifecycle(id);
+
+    if (req.user.role !== "admin" && String(event.createdByUserId) !== String(req.user.userId)) {
+      throw forbiddenError("Acao nao permitida!");
+    }
+
+    if (["ONGOING", "COMPLETED", "CANCELLED"].includes(event.status)) {
+      throw forbiddenError("Evento ja terminou ou esta ocorrendo!");
+    }
+
+    if (req.body.dateTime) {
+      const dateTime = new Date(req.body.dateTime);
+      if (Number.isNaN(dateTime.getTime())) {
+        throw validationError("Data e hora invalidas");
+      }
+
+      if (dateTime < new Date()) {
+        throw validationError("Evento agendado precisa ter data futura");
+      }
+      req.body.dateTime = dateTime;
+    }
+
+    const updatedEvent = await Event.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     });
-    if (!event) return res.status(404).json({ error: "Event não encontrado" });
-    return res.json(event).status(200);
+
+    return res.status(200).json(updatedEvent);
   } catch (err) {
     next(err);
   }
@@ -97,17 +145,23 @@ export async function putEvent(req, res, next) {
 
 export async function deleteEvent(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
     const id = req.params.id;
-    if (!id)
-      return res.status(400).json({ error: "ID do Event é obrigatório!" });
 
-    if (user.role !== "admin" && user.userId !== id)
-      return res.status(403).json({ error: "Ação não permitida!" });
+    if (!id) {
+      throw validationError("ID do Event e obrigatorio!");
+    }
 
-    const event = await Event.findByIdAndDelete(id);
-    if (!event) return res.status(404).json({ error: "Event não encontrado" });
-    return res.json({ message: "Event deletado com sucesso!" }).status(200);
+    const event = await Event.findById(id);
+    if (!event) {
+      throw notFoundError("Event nao encontrado");
+    }
+
+    if (req.user.role !== "admin" && String(event.createdByUserId) !== String(req.user.userId)) {
+      throw forbiddenError("Acao nao permitida!");
+    }
+
+    await Event.findByIdAndDelete(id);
+    return res.status(200).json({ message: "Event deletado com sucesso!" });
   } catch (err) {
     next(err);
   }
@@ -115,69 +169,122 @@ export async function deleteEvent(req, res, next) {
 
 export async function getEventById(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
     const id = req.params.id;
-    if (!id)
-      return res.status(400).json({ error: "ID do Event é obrigatório!" });
-    if (user.role !== "admin" && user.userId !== id)
-      return res.status(403).json({ error: "Ação não permitida!" }); 
-    const event = await Event.findById(id);
-    if (!event) return res.status(404).json({ error: "Event não encontrado" });
-    return res.json(event).status(200);
+
+    if (!id) {
+      throw validationError("ID do Event e obrigatorio!");
+    }
+
+    const event = await syncEventLifecycle(id);
+
+    return res.status(200).json(event);
   } catch (err) {
     next(err);
   }
 }
 
-export async function postEnterEvent (req, res, next) {
+export async function postEnterEvent(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
-    const id = req.params.id;
-    if (!id)
-      return res.status(400).json({ error: "ID do Event é obrigatório!" });
-    const event = await Event.findById(id);
-    if (!event) return res.status(404).json({ error: "Event não encontrado" });
-    if (event.dateTime < new Date())
-      return res.status(400).json({ error: "Event já ocorreu" });
-    if (!req.body.idDeck)
-      return res.status(400).json({ error: "ID do Deck é obrigatório!" });
-    const checkPlayer = await Player.findOne({ idUser: user.userId, idEvent: id });
-    if (checkPlayer)
-      return res.status(400).json({ error: "Usuário já inscrito no Event" });
-    
-    delete req.body.idUser; // previne mudança de dono do Event
-    delete req.body.idEvent; // previne mudança de dono do Event
-    delete req.body.points; // previne mudança de pontos
-    
-    const player = new Player({
-      idUser: user.userId,
-      idEvent: id,
-      idDeck: req.body.idDeck,
-      points: 0
+    const eventId = req.params.id;
+
+    if (!eventId) {
+      throw validationError("ID do Event e obrigatorio!");
+    }
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      throw notFoundError("Event nao encontrado");
+    }
+
+    if (event.dateTime < new Date()) {
+      throw validationError("Event ja ocorreu");
+    }
+
+    requireFields(req.body, ["deckId"]);
+
+    const player = await Player.findOne({ userId: req.user.userId }).select("_id").lean();
+    if (!player) {
+      throw notFoundError("Player nao encontrado para o usuario autenticado");
+    }
+
+    const deck = await Deck.findById(req.body.deckId).select("playerId").lean();
+    if (!deck) {
+      throw notFoundError("Deck nao encontrado");
+    }
+
+    if (String(deck.playerId) !== String(player._id)) {
+      throw forbiddenError("Deck nao pertence ao player autenticado");
+    }
+
+    const checkEntry = await EventEntry.findOne({
+      eventId,
+      entryType: "PLAYER",
+      playerId: player._id,
     });
 
-    await player.save();
-    return res.json({ message: "Inscrição realizada com sucesso!" }).status(200);
-    
-  } catch (err) { 
-    next(err);  
+    if (checkEntry) {
+      throw validationError("Player ja inscrito no evento");
+    }
+
+    const entry = new EventEntry({
+      eventId,
+      entryType: "PLAYER",
+      playerId: player._id,
+      teamId: null,
+      deckId: req.body.deckId,
+      seed: req.body.seed,
+      status: req.body.status,
+    });
+
+    await entry.save();
+
+    return res.status(201).json({
+      id: entry._id,
+      message: "Inscricao realizada com sucesso!",
+    });
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map((error) => error.message);
+      throw validationError("Falha de validacao", messages);
+    }
+
+    next(err);
   }
 }
 
-export async function deleteLeaveEvent (req, res, next) {
+export async function deleteLeaveEvent(req, res, next) {
   try {
-    const user = userData(req.cookies.token);
-    const id = req.params.id;
-    if (!id)
-      return res.status(400).json({ error: "ID do Event é obrigatório!" });
-    const event = await Event.findById(id);
-    if (!event) return res.status(404).json({ error: "Event não encontrado" });
-    if (event.dateTime < new Date())
-      return res.status(400).json({ error: "Event já ocorreu" });
-    const player = await Player.findOneAndDelete({ idUser: user.userId, idEvent: id });
-    if (!player)
-      return res.status(404).json({ error: "Usuário não inscrito no Event" });
-    return res.json({ message: "Inscrição cancelada com sucesso!" }).status(200);
+    const eventId = req.params.id ?? req.params.idEvent;
+
+    if (!eventId) {
+      throw validationError("ID do Event e obrigatorio!");
+    }
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      throw notFoundError("Event nao encontrado");
+    }
+
+    if (event.dateTime < new Date()) {
+      throw validationError("Event ja ocorreu");
+    }
+
+    const player = await Player.findOne({ userId: req.user.userId }).select("_id").lean();
+    if (!player) {
+      throw notFoundError("Player nao encontrado para o usuario autenticado");
+    }
+
+    const entry = await EventEntry.findOneAndDelete({
+      eventId,
+      entryType: "PLAYER",
+      playerId: player._id,
+    });
+
+    if (!entry) {
+      throw notFoundError("Usuario nao inscrito no Event");
+    }
+
+    return res.status(200).json({ message: "Inscricao cancelada com sucesso!" });
   } catch (err) {
     next(err);
   }
@@ -186,13 +293,133 @@ export async function deleteLeaveEvent (req, res, next) {
 export async function getPlayers(req, res, next) {
   try {
     const { eventId } = req.params;
+    requireFields(req.params, ["eventId"]);
 
-    const players = await Player.find({ idEvent: eventId })
-      .populate("idDeck", "name") // popula o usuário (só o nome)
-      .populate("idUser", "name"); // popula o deck (só o nome)
+    const players = await EventEntry.find({ eventId, entryType: "PLAYER" })
+      .populate("playerId", "displayName points wins losses draws")
+      .populate("deckId", "name commander format link isActive");
 
     res.status(200).json(players);
   } catch (err) {
     next(err);
+  }
+}
+
+export async function getEventEntries(req, res, next) {
+  try {
+    requireFields(req.params, ["eventId"]);
+    const entries = await EventEntry.find({ eventId: req.params.eventId })
+      .populate("playerId", "displayName")
+      .populate("deckId", "name format commander")
+      .lean();
+    res.status(200).json(entries);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getMatchesForEvent(req, res, next) {
+  try {
+    requireFields(req.params, ["eventId"]);
+    const matches = await listMatchesByEvent(req.params.eventId);
+    res.status(200).json(matches);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function generateEventRound(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.eventId);
+    const round = parsePositiveInteger(req.params.round, "round");
+    const matches = await generateRound(req.params.eventId, round, {
+      actorUserId: req.user.userId,
+      requestId: req.requestId,
+    });
+    res.status(201).json(matches);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getEventRound(req, res, next) {
+  try {
+    const round = parsePositiveInteger(req.params.round, "round");
+    const matches = await getRoundMatches(req.params.eventId, round);
+    res.status(200).json(matches);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function closeEventRound(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.eventId);
+    const round = parsePositiveInteger(req.params.round, "round");
+    const standings = await closeRound(req.params.eventId, round, {
+      actorUserId: req.user.userId,
+      requestId: req.requestId,
+    });
+    res.status(200).json(standings);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function finishCurrentEvent(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.id);
+    const event = await finishEvent(req.params.id, {
+      actorUserId: req.user.userId,
+      requestId: req.requestId,
+    });
+    res.status(200).json({
+      message: "Evento finalizado com sucesso!",
+      event,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function startCurrentEvent(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.id);
+    const event = await startEvent(req.params.id, {
+      actorUserId: req.user.userId,
+      requestId: req.requestId,
+    });
+    res.status(200).json({
+      message: "Evento iniciado com sucesso!",
+      event,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function cancelCurrentEvent(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.id);
+    const event = await cancelEvent(req.params.id, {
+      actorUserId: req.user.userId,
+      requestId: req.requestId,
+    });
+    res.status(200).json({
+      message: "Evento cancelado com sucesso!",
+      event,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getStandings(req, res, next) {
+  try {
+    requireFields(req.params, ["eventId"]);
+    const standings = await getEventStandings(req.params.eventId);
+    res.status(200).json(standings);
+  } catch (error) {
+    next(error);
   }
 }

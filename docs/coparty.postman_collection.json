@@ -1,0 +1,218 @@
+{
+  "info": {
+    "name": "Coparty API",
+    "_postman_id": "8d4ebfd3-3190-4ae0-87ed-5cf79b7df01f",
+    "description": "Collection para testar auth, players, decks, events, entries, rounds, matches, standings, rankings e rebuild administrativo.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api" },
+    { "key": "eventId", "value": "" },
+    { "key": "matchId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"organizer\",\n  \"email\": \"organizer@test.com\",\n  \"password\": \"123456\",\n  \"role\": \"admin\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/users/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"login\": \"organizer\",\n  \"password\": \"123456\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Core",
+      "item": [
+        {
+          "name": "Create Player",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/players",
+            "body": { "mode": "raw", "raw": "{\n  \"displayName\": \"Organizer Player\"\n}" }
+          }
+        },
+        {
+          "name": "Create Deck",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/decks/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Modern Deck\",\n  \"format\": \"MODERN\",\n  \"link\": \"https://example.com/deck\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Event 1v1",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/events",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Friday Modern\",\n  \"description\": \"Evento 1v1\",\n  \"dateTime\": \"2099-01-01T19:00:00.000Z\",\n  \"pairingType\": \"SWISS\",\n  \"status\": \"SCHEDULED\",\n  \"gameMode\": \"ONE_VS_ONE\",\n  \"maxPlayers\": 32\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Event Commander",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/events",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Commander Night\",\n  \"description\": \"Mesas multiplayer\",\n  \"dateTime\": \"2099-01-02T19:00:00.000Z\",\n  \"pairingType\": \"SWISS\",\n  \"status\": \"SCHEDULED\",\n  \"gameMode\": \"COMMANDER_MULTIPLAYER\",\n  \"maxPlayers\": 24\n}"
+            }
+          }
+        },
+        {
+          "name": "Join Event",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/events/{{eventId}}/entries",
+            "body": { "mode": "raw", "raw": "{\n  \"deckId\": \"DECK_ID\"\n}" }
+          }
+        },
+        {
+          "name": "List Entries",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/events/{{eventId}}/entries"
+          }
+        },
+        {
+          "name": "Generate Round 1",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/events/{{eventId}}/rounds/1/generate"
+          }
+        },
+        {
+          "name": "Submit 1v1 Result",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matches/{{matchId}}/result",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participants\": [\n    {\n      \"eventEntryId\": \"ENTRY_1\",\n      \"resultType\": \"WIN\",\n      \"placement\": 1,\n      \"score\": 2,\n      \"pointsEarned\": 3,\n      \"isWinner\": true,\n      \"eliminations\": 0\n    },\n    {\n      \"eventEntryId\": \"ENTRY_2\",\n      \"resultType\": \"LOSS\",\n      \"placement\": 2,\n      \"score\": 0,\n      \"pointsEarned\": 0,\n      \"isWinner\": false,\n      \"eliminations\": 0\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Submit Commander Result",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matches/{{matchId}}/result",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participants\": [\n    {\n      \"eventEntryId\": \"ENTRY_1\",\n      \"resultType\": \"WIN\",\n      \"placement\": 1,\n      \"score\": 4,\n      \"pointsEarned\": 5,\n      \"isWinner\": true,\n      \"eliminations\": 2\n    },\n    {\n      \"eventEntryId\": \"ENTRY_2\",\n      \"resultType\": \"LOSS\",\n      \"placement\": 2,\n      \"score\": 3,\n      \"pointsEarned\": 3,\n      \"isWinner\": false,\n      \"eliminations\": 1\n    },\n    {\n      \"eventEntryId\": \"ENTRY_3\",\n      \"resultType\": \"LOSS\",\n      \"placement\": 3,\n      \"score\": 2,\n      \"pointsEarned\": 2,\n      \"isWinner\": false,\n      \"eliminations\": 0\n    },\n    {\n      \"eventEntryId\": \"ENTRY_4\",\n      \"resultType\": \"LOSS\",\n      \"placement\": 4,\n      \"score\": 1,\n      \"pointsEarned\": 1,\n      \"isWinner\": false,\n      \"eliminations\": 0\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Complete Match",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matches/{{matchId}}/status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"COMPLETED\"\n}" }
+          }
+        },
+        {
+          "name": "Close Round",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/events/{{eventId}}/rounds/1/close"
+          }
+        },
+        {
+          "name": "Get Standings",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/events/{{eventId}}/standings"
+          }
+        },
+        {
+          "name": "Get Player Rankings",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/rankings/players?gameMode=ONE_VS_ONE"
+          }
+        },
+        {
+          "name": "Get Commander Rankings",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/rankings/players?gameMode=COMMANDER_MULTIPLAYER"
+          }
+        },
+        {
+          "name": "Reopen Match",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/matches/{{matchId}}/reopen"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Rebuild Global",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/rebuild"
+          }
+        },
+        {
+          "name": "Rebuild Event",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/rebuild/event/{{eventId}}"
+          }
+        },
+        {
+          "name": "Rebuild Round",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/rebuild/round/{{eventId}}/1"
+          }
+        },
+        {
+          "name": "Rebuild Match",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/rebuild/match/{{matchId}}"
+          }
+        }
+      ]
+    }
+  ]
+}

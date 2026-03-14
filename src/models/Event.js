@@ -1,53 +1,50 @@
 import mongoose from "mongoose";
+import {
+  EVENT_GAME_MODES,
+  EVENT_PAIRING_TYPES,
+  EVENT_STATUSES,
+} from "./constants.js";
 
 const eventSchema = new mongoose.Schema(
   {
-    name: { type: String, required: [true, "Nome é obrigatorio"] },
-    description: { type: String },
-    dateTime: { type: Date, required: [true, "Data e hora é obrigatorio"] },
-    local: { type: String, required: [true, "Local é Obrigatório"] },
+    name: {
+      type: String,
+      required: [true, "Nome e obrigatorio"],
+      trim: true,
+      maxlength: [120, "Nome precisa ter no maximo 120 caracteres"],
+    },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: [1000, "Descricao precisa ter no maximo 1000 caracteres"],
+    },
+    dateTime: {
+      type: Date,
+      required: [true, "Data e hora e obrigatoria"],
+    },
+    pairingType: {
+      type: String,
+      required: [true, "Pairing type e obrigatorio"],
+      enum: EVENT_PAIRING_TYPES,
+    },
     status: {
       type: String,
-      enum: ["scheduled", "ongoing", "completed"],
-      default: "scheduled",
+      enum: EVENT_STATUSES,
+      default: "DRAFT",
     },
-    paring: {
+    gameMode: {
       type: String,
-      enum: [
-        "swiss",
-        "round-robin",
-        "single-elimination",
-        "double-elimination",
-      ],
-      required: [true, "Sistema de paring é obrigatorio"],
+      required: [true, "Game mode e obrigatorio"],
+      enum: EVENT_GAME_MODES,
     },
-    gamemode: {
-      type: String,
-      enum: [
-        "standard",
-        "modern",
-        "commander",
-        "draft",
-        "sealed",
-        "commander500",
-        "commander250",
-        "commander15",
-        "commander2",
-        "commander imperial",
-        "commander gigant of two heads",
-        "brawl",
-        "historic",
-        "pioneer",
-        "pauper",
-        "vintage",
-        "legacy",
-      ],
-      required: [true, "Gamemode é obrigatorio"],
+    maxPlayers: {
+      type: Number,
+      min: [2, "Max players precisa ser ao menos 2"],
     },
-    idUser: {
+    createdByUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "User é obrigatório"],
+      required: [true, "Created by user e obrigatorio"],
     },
   },
   { timestamps: true }
