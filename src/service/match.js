@@ -42,16 +42,15 @@ export function getDefaultPointsForResult(resultType) {
   }
 }
 
-function getCommanderPointsForPlacement(placement) {
-  switch (placement) {
-    case 1:
-      return 5;
-    case 2:
-      return 3;
-    case 3:
+function getDefaultScoreForResult(resultType) {
+  switch (resultType) {
+    case "WIN":
+    case "BYE":
       return 2;
-    case 4:
+    case "DRAW":
       return 1;
+    case "LOSS":
+    case "ELIMINATED":
     default:
       return 0;
   }
@@ -169,18 +168,27 @@ export function validateResultConsistency(participants, gameMode = "ONE_VS_ONE")
       throw validationError("Mesa Commander precisa ter pelo menos dois participantes");
     }
 
-    const placements = participants.map((participant) => participant.placement);
-    if (placements.some((placement) => placement == null)) {
-      throw validationError("Commander exige placement para todos os participantes");
-    }
-
-    if (new Set(placements).size !== placements.length) {
-      throw validationError("Commander exige placements unicos");
-    }
-
     const winners = participants.filter((participant) => participant.isWinner === true);
+    const draws = participants.filter((participant) => participant.resultType === "DRAW");
+
+    if (draws.length > 0) {
+      if (draws.length !== participants.length || winners.length !== 0) {
+        throw validationError("Empate em Commander exige todos os participantes com DRAW e nenhum vencedor");
+      }
+
+      return true;
+    }
+
     if (winners.length !== 1 || winners[0].placement !== 1) {
       throw validationError("Commander exige exatamente um vencedor com placement 1");
+    }
+
+    const hasInvalidLoser = participants
+      .filter((participant) => participant.isWinner !== true)
+      .some((participant) => participant.resultType !== "LOSS" || participant.placement !== 2);
+
+    if (hasInvalidLoser) {
+      throw validationError("Commander exige um vencedor e todos os demais participantes com LOSS e placement 2");
     }
   }
 
@@ -307,19 +315,18 @@ export async function recordMatchResult(matchId, participantsPayload, auditConte
     validateResultConsistency(participantsPayload, event.gameMode);
 
     for (const participant of participantsPayload) {
+      const normalizedResultType = participant.resultType;
+      const normalizedPlacement = normalizedResultType === "LOSS" || normalizedResultType === "ELIMINATED" ? 2 : 1;
+
       await MatchParticipant.findOneAndUpdate(
         { matchId, eventEntryId: participant.eventEntryId },
         {
-          resultType: participant.resultType,
-          placement: participant.placement ?? null,
-          score: participant.score ?? 0,
-          pointsEarned: participant.pointsEarned ?? (
-            event.gameMode === "COMMANDER_MULTIPLAYER"
-              ? getCommanderPointsForPlacement(participant.placement)
-              : getDefaultPointsForResult(participant.resultType)
-          ),
-          isWinner: participant.isWinner ?? false,
-          eliminations: participant.eliminations ?? 0,
+          resultType: normalizedResultType,
+          placement: normalizedPlacement,
+          score: getDefaultScoreForResult(normalizedResultType),
+          pointsEarned: getDefaultPointsForResult(normalizedResultType),
+          isWinner: normalizedResultType === "WIN" || normalizedResultType === "BYE",
+          eliminations: 0,
         },
         { new: true, runValidators: true }
       );
@@ -463,3 +470,4 @@ export async function reopenMatch(matchId, auditContext = {}) {
     return getMatchById(matchId);
   });
 }
+

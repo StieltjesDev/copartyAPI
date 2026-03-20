@@ -25,10 +25,11 @@ export async function getUsers(req, res, next) {
 
 export async function createUser(req, res, next) {
   try {
-    requireFields(req.body, ["username", "password"]);
+    requireFields(req.body, ["username", "email", "password"]);
     const { username, email, password, role } = req.body;
 
-    const user = new User({ username, email, role });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = new User({ username, email: normalizedEmail, role });
 
     if (password) {
       user.password = password;
@@ -185,14 +186,22 @@ export async function updateUser(req, res, next) {
       user.username = username;
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "email")) {
+    const emailWasProvided = Object.prototype.hasOwnProperty.call(req.body, "email");
+    if (!user.email && !emailWasProvided) {
+      throw validationError("email e obrigatorio para completar o perfil");
+    }
+
+    if (emailWasProvided) {
       const email = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
-      if (email) {
-        const existingUser = await User.findOne({ email }).select("_id");
-        if (existingUser && String(existingUser._id) !== String(user._id)) {
-          throw validationError("email ja cadastrado!");
-        }
+      if (!email) {
+        throw validationError("email e obrigatorio!");
       }
+
+      const existingUser = await User.findOne({ email }).select("_id");
+      if (existingUser && String(existingUser._id) !== String(user._id)) {
+        throw validationError("email ja cadastrado!");
+      }
+
       user.email = email;
     }
 

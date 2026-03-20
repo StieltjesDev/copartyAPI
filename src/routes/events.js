@@ -6,6 +6,7 @@ import {
   deleteEvent,
   deleteLeaveEvent,
   dropEventEntry,
+  removeEventEntry,
   findEventsByUserId,
   finishCurrentEvent,
   generateEventRound,
@@ -30,6 +31,7 @@ router.get("/:eventId/entries", authenticateToken, getEventEntries);
 router.get("/:eventId/matches", authenticateToken, getMatchesForEvent);
 router.post("/:id/entries", authenticateToken, postEnterEvent);
 router.delete("/:id/entries/me", authenticateToken, deleteLeaveEvent);
+router.delete("/:eventId/entries/:entryId", authenticateToken, removeEventEntry);
 router.patch("/:eventId/entries/:entryId/drop", authenticateToken, dropEventEntry);
 router.post("/:eventId/rounds/:round/generate", authenticateToken, generateEventRound);
 router.get("/:eventId/rounds/:round", authenticateToken, getEventRound);
@@ -43,3 +45,4 @@ router.put("/:id", authenticateToken, putEvent);
 router.delete("/:id", authenticateToken, deleteEvent);
 
 export default router;
+

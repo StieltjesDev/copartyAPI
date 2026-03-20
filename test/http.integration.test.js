@@ -25,6 +25,25 @@ function makeId(prefix, counter) {
   return `${prefix}-${counter.value++}`;
 }
 
+function isSupportedDeckLink(link) {
+  if (!link) return true;
+
+  try {
+    const url = new URL(link);
+    if (["moxfield.com", "www.moxfield.com"].includes(url.hostname)) {
+      return url.pathname.startsWith("/decks/");
+    }
+
+    if (["ligamagic.com.br", "www.ligamagic.com.br"].includes(url.hostname)) {
+      return url.searchParams.get("view") === "dks/deck" && url.searchParams.has("id");
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function matchesFilter(item, filter = {}) {
   return Object.entries(filter).every(([key, expected]) => {
     if (expected && typeof expected === "object" && !Array.isArray(expected)) {
@@ -101,6 +120,14 @@ function setupInMemoryPersistence() {
   };
 
   User.prototype.save = async function saveUser() {
+    if (this.isNew && !this.email) {
+      const error = new Error("validation failed");
+      error.name = "ValidationError";
+      error.errors = {
+        email: { message: "Email e obrigatorio" },
+      };
+      throw error;
+    }
     this._id ||= makeId("user", counter);
     if (this._plainPassword) {
       this.passwordHash = `hashed:${this._plainPassword}`;
@@ -219,6 +246,15 @@ function setupInMemoryPersistence() {
   };
 
   Deck.prototype.save = async function saveDeck() {
+    if (!isSupportedDeckLink(this.link)) {
+      const error = new Error("validation failed");
+      error.name = "ValidationError";
+      error.errors = {
+        link: { message: "Link precisa ser um deck da LigaMagic ou do Moxfield" },
+      };
+      throw error;
+    }
+
     this._id ||= makeId("deck", counter);
     this.createdAt ||= new Date().toISOString();
     store.decks.push({
@@ -437,7 +473,7 @@ async function createUserAndSession(baseUrl, { username, email, role = "user", d
       name: deckName,
       format,
       commander,
-      link: `https://example.com/${username}-deck`,
+      link: `https://moxfield.com/decks/${username}-deck`,
     }),
   });
 
@@ -493,7 +529,7 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
         name: "Deck A",
         format: "MODERN",
         commander: null,
-        link: "https://example.com/deck-a",
+        link: "https://moxfield.com/decks/deck-a",
       }),
     });
     assert.equal(deckResponse.response.status, 201);
@@ -546,7 +582,7 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
         name: "Deck B",
         format: "MODERN",
         commander: null,
-        link: "https://example.com/deck-b",
+        link: "https://moxfield.com/decks/deck-b",
       }),
     });
 
@@ -610,7 +646,14 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
       }),
     });
     assert.equal(result.response.status, 200);
-
+    const commanderWinner = result.data.participants.find((participant) => participant.resultType === "WIN");
+    const commanderLosers = result.data.participants.filter((participant) => participant.resultType === "LOSS");
+    assert.equal(commanderWinner.pointsEarned, 3);
+    assert.equal(commanderWinner.score, 2);
+    assert.equal(commanderWinner.eliminations, 0);
+    assert.ok(commanderLosers.every((participant) => participant.pointsEarned === 0));
+    assert.ok(commanderLosers.every((participant) => participant.score === 0));
+    assert.ok(commanderLosers.every((participant) => participant.eliminations === 0));
     const complete = await request(baseUrl, `/api/matches/${matchId}/status`, {
       method: "PATCH",
       headers: { "content-type": "application/json", cookie },
@@ -699,7 +742,7 @@ test("fluxo HTTP completo Commander multiplayer", async () => {
           name: `Commander Deck ${index}`,
           format: "COMMANDER",
           commander: `Commander Card ${index}`,
-          link: `https://example.com/commander-${index}`,
+          link: `https://moxfield.com/decks/commander-${index}`,
         }),
       });
       deckIds.push(deck.data._id);
@@ -757,16 +800,23 @@ test("fluxo HTTP completo Commander multiplayer", async () => {
         participants: entries.data.map((entry, index) => ({
           eventEntryId: entry._id,
           resultType: index === 0 ? "WIN" : "LOSS",
-          placement: index + 1,
-          score: 4 - index,
-          pointsEarned: [5, 3, 2, 1][index],
+          placement: index === 0 ? 1 : 2,
+          score: index === 0 ? 99 : 77,
+          pointsEarned: index === 0 ? 99 : 77,
           isWinner: index === 0,
-          eliminations: index === 0 ? 2 : 0,
+          eliminations: index === 0 ? 3 : 1,
         })),
       }),
     });
     assert.equal(result.response.status, 200);
-
+    const commanderWinner = result.data.participants.find((participant) => participant.resultType === "WIN");
+    const commanderLosers = result.data.participants.filter((participant) => participant.resultType === "LOSS");
+    assert.equal(commanderWinner.pointsEarned, 3);
+    assert.equal(commanderWinner.score, 2);
+    assert.equal(commanderWinner.eliminations, 0);
+    assert.ok(commanderLosers.every((participant) => participant.pointsEarned === 0));
+    assert.ok(commanderLosers.every((participant) => participant.score === 0));
+    assert.ok(commanderLosers.every((participant) => participant.eliminations === 0));
     const complete = await request(baseUrl, `/api/matches/${matchId}/status`, {
       method: "PATCH",
       headers: { "content-type": "application/json", cookie: cookies[0] },
@@ -784,7 +834,7 @@ test("fluxo HTTP completo Commander multiplayer", async () => {
       headers: { cookie: cookies[0] },
     });
     assert.equal(standings.response.status, 200);
-    assert.equal(standings.data[0].points, 5);
+    assert.equal(standings.data[0].points, 3);
 
     const rankings = await request(baseUrl, "/api/rankings/players?gameMode=COMMANDER_MULTIPLAYER", {
       headers: { cookie: cookies[0] },
@@ -878,19 +928,19 @@ test("fluxos HTTP negativos de autorizacao e estado invalido", async () => {
             eventEntryId: store.entries[0]._id,
             resultType: "WIN",
             placement: 1,
-            score: 2,
-            pointsEarned: 3,
+            score: 99,
+            pointsEarned: 99,
             isWinner: true,
-            eliminations: 0,
+            eliminations: 4,
           },
           {
             eventEntryId: store.entries[1]._id,
             resultType: "LOSS",
             placement: 2,
-            score: 0,
-            pointsEarned: 0,
+            score: 77,
+            pointsEarned: 77,
             isWinner: false,
-            eliminations: 0,
+            eliminations: 8,
           },
         ],
       }),
@@ -942,25 +992,32 @@ test("fluxos HTTP negativos de autorizacao e estado invalido", async () => {
             eventEntryId: store.entries[0]._id,
             resultType: "WIN",
             placement: 1,
-            score: 2,
-            pointsEarned: 3,
+            score: 99,
+            pointsEarned: 99,
             isWinner: true,
-            eliminations: 0,
+            eliminations: 4,
           },
           {
             eventEntryId: store.entries[1]._id,
             resultType: "LOSS",
             placement: 2,
-            score: 0,
-            pointsEarned: 0,
+            score: 77,
+            pointsEarned: 77,
             isWinner: false,
-            eliminations: 0,
+            eliminations: 8,
           },
         ],
       }),
     });
     assert.equal(validResult.response.status, 200);
-
+    const winningParticipant = validResult.data.participants.find((participant) => String(participant.eventEntryId._id || participant.eventEntryId) === String(store.entries[0]._id));
+    const losingParticipant = validResult.data.participants.find((participant) => String(participant.eventEntryId._id || participant.eventEntryId) === String(store.entries[1]._id));
+    assert.equal(winningParticipant.pointsEarned, 3);
+    assert.equal(winningParticipant.score, 2);
+    assert.equal(winningParticipant.eliminations, 0);
+    assert.equal(losingParticipant.pointsEarned, 0);
+    assert.equal(losingParticipant.score, 0);
+    assert.equal(losingParticipant.eliminations, 0);
     const duplicateResult = await request(baseUrl, `/api/matches/${matchId}/result`, {
       method: "PATCH",
       headers: { "content-type": "application/json", cookie: organizer.cookie },
@@ -970,19 +1027,19 @@ test("fluxos HTTP negativos de autorizacao e estado invalido", async () => {
             eventEntryId: store.entries[0]._id,
             resultType: "WIN",
             placement: 1,
-            score: 2,
-            pointsEarned: 3,
+            score: 99,
+            pointsEarned: 99,
             isWinner: true,
-            eliminations: 0,
+            eliminations: 4,
           },
           {
             eventEntryId: store.entries[1]._id,
             resultType: "LOSS",
             placement: 2,
-            score: 0,
-            pointsEarned: 0,
+            score: 77,
+            pointsEarned: 77,
             isWinner: false,
-            eliminations: 0,
+            eliminations: 8,
           },
         ],
       }),
@@ -1182,7 +1239,7 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
         name: "Finish Cup",
         description: "Evento para finalizar",
         dateTime: "2099-01-05T10:00:00.000Z",
-        pairingType: "SWISS",
+        pairingType: "ROUND_ROBIN",
         gameMode: "ONE_VS_ONE",
         maxPlayers: 16,
       }),
@@ -1261,7 +1318,7 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
         name: "Draft Cup",
         description: "Evento para cancelamento",
         dateTime: "2099-01-06T10:00:00.000Z",
-        pairingType: "SWISS",
+        pairingType: "ROUND_ROBIN",
         gameMode: "ONE_VS_ONE",
         maxPlayers: 8,
         isDraft: true,
@@ -1286,7 +1343,7 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
         name: "Overdue Draft Cup",
         description: "Evento vencido",
         dateTime: "2099-01-07T10:00:00.000Z",
-        pairingType: "SWISS",
+        pairingType: "ROUND_ROBIN",
         gameMode: "ONE_VS_ONE",
         maxPlayers: 8,
       }),
@@ -1351,7 +1408,7 @@ test("evento aplica formato oficial e bloqueia deck incompativel na inscricao", 
         name: "Commander Legal Deck",
         format: "COMMANDER",
         commander: "Kinnan",
-        link: "https://example.com/format-player-commander",
+        link: "https://moxfield.com/decks/format-player-commander",
       }),
     });
     assert.equal(deckResponse.response.status, 201);
@@ -1367,7 +1424,7 @@ test("evento aplica formato oficial e bloqueia deck incompativel na inscricao", 
         description: "Evento com formato travado",
         dateTime: "2099-03-01T10:00:00.000Z",
         format: "COMMANDER",
-        pairingType: "SWISS",
+        pairingType: "ROUND_ROBIN",
         gameMode: "ONE_VS_ONE",
         maxPlayers: 16,
       }),
@@ -1381,6 +1438,7 @@ test("evento aplica formato oficial e bloqueia deck incompativel na inscricao", 
     assert.equal(event.response.status, 200);
     assert.equal(event.data.format, "COMMANDER");
     assert.equal(event.data.gameMode, "COMMANDER_MULTIPLAYER");
+    assert.equal(event.data.pairingType, "SWISS");
 
     const incompatibleJoin = await request(baseUrl, `/api/events/${eventId}/entries`, {
       method: "POST",
@@ -1450,7 +1508,7 @@ test("drop remove inscrito dos proximos pareamentos e mantem standings", async (
         description: "Evento para testar drop",
         dateTime: "2099-04-01T10:00:00.000Z",
         format: "MODERN",
-        pairingType: "SWISS",
+        pairingType: "ROUND_ROBIN",
         gameMode: "ONE_VS_ONE",
         maxPlayers: 16,
       }),
@@ -1557,7 +1615,7 @@ test("drop remove inscrito dos proximos pareamentos e mantem standings", async (
   }
 });
 
-test("perfil permite editar username e email unico e sincroniza displayName do player", async () => {
+test("rejeita link de deck fora da LigaMagic ou Moxfield", async () => {
   setupInMemoryPersistence();
 
   const app = createApp();
@@ -1566,16 +1624,76 @@ test("perfil permite editar username e email unico e sincroniza displayName do p
   const baseUrl = `http://127.0.0.1:${port}`;
 
   try {
-    const userOne = await request(baseUrl, "/api/users", {
+    const user = await createUserAndSession(baseUrl, {
+      username: "deck-link-user",
+      email: "deck-link-user@test.com",
+      role: "user",
+      displayName: "Deck Link User",
+      deckName: "Deck Link Base",
+    });
+
+    const invalidDeck = await request(baseUrl, "/api/decks/me", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: user.cookie },
+      body: JSON.stringify({
+        name: "Deck Invalido",
+        format: "MODERN",
+        link: "https://deckstats.net/decks/123",
+      }),
+    });
+
+    assert.equal(invalidDeck.response.status, 400);
+    assert.equal(invalidDeck.data.error.message, "Falha de validacao");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("cadastro exige email para novos usuarios", async () => {
+  setupInMemoryPersistence();
+
+  const app = createApp();
+  const server = app.listen(0);
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const signup = await request(baseUrl, "/api/users", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        username: "profile-user",
+        username: "missing-email-user",
         password: "123456",
         role: "user",
       }),
     });
-    assert.equal(userOne.response.status, 201);
+
+    assert.equal(signup.response.status, 400);
+    assert.equal(signup.data.error.message, "Campos obrigatorios ausentes: email");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("perfil permite editar username e email unico e sincroniza displayName do player", async () => {
+  const store = setupInMemoryPersistence();
+
+  const app = createApp();
+  const server = app.listen(0);
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    store.users.push({
+      _id: "legacy-profile-user",
+      username: "profile-user",
+      email: null,
+      role: "user",
+      passwordHash: "hashed:123456",
+      createdAt: new Date().toISOString(),
+    });
+
+    const userOne = { data: { id: "legacy-profile-user" } };
 
     const loginOne = await request(baseUrl, "/api/users/login", {
       method: "POST",
@@ -1585,13 +1703,17 @@ test("perfil permite editar username e email unico e sincroniza displayName do p
     const cookieOne = loginOne.response.headers.get("set-cookie");
     assert.ok(cookieOne);
 
-    const createPlayer = await request(baseUrl, "/api/players", {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie: cookieOne },
-      body: JSON.stringify({}),
+    store.players.push({
+      _id: "legacy-player",
+      userId: "legacy-profile-user",
+      displayName: "profile-user",
+      points: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      createdAt: new Date().toISOString(),
     });
-    assert.equal(createPlayer.response.status, 201);
-    assert.equal(createPlayer.data.displayName, "profile-user");
+
 
     const userTwo = await request(baseUrl, "/api/users", {
       method: "POST",
@@ -1617,11 +1739,8 @@ test("perfil permite editar username e email unico e sincroniza displayName do p
     assert.equal(updateProfile.data.username, "profile-user-renamed");
     assert.equal(updateProfile.data.email, "profile@test.com");
 
-    const myPlayer = await request(baseUrl, "/api/players/me", {
-      headers: { cookie: cookieOne },
-    });
-    assert.equal(myPlayer.response.status, 200);
-    assert.equal(myPlayer.data.displayName, "profile-user-renamed");
+    assert.equal(store.players.length, 1);
+    assert.equal(store.players[0].displayName, "profile-user-renamed");
 
     const duplicateEmail = await request(baseUrl, `/api/users/${userOne.data.id}`, {
       method: "PUT",
@@ -1630,6 +1749,118 @@ test("perfil permite editar username e email unico e sincroniza displayName do p
     });
     assert.equal(duplicateEmail.response.status, 400);
     assert.equal(duplicateEmail.data.error.message, "email ja cadastrado!");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+
+
+
+
+test("organizador remove inscricao antes do inicio e drop so vale com evento em andamento", async () => {
+  setupInMemoryPersistence();
+
+  const app = createApp();
+  const server = app.listen(0);
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const organizer = await createUserAndSession(baseUrl, {
+      username: "entry-organizer",
+      email: "entry-organizer@test.com",
+      role: "admin",
+      displayName: "Entry Organizer",
+      deckName: "Entry Deck A",
+    });
+    const player = await createUserAndSession(baseUrl, {
+      username: "entry-player",
+      email: "entry-player@test.com",
+      role: "user",
+      displayName: "Entry Player",
+      deckName: "Entry Deck B",
+    });
+
+    const eventResponse = await request(baseUrl, "/api/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: organizer.cookie,
+      },
+      body: JSON.stringify({
+        name: "Entry Rules Cup",
+        description: "Validacao de remocao e drop",
+        dateTime: "2099-05-01T10:00:00.000Z",
+        pairingType: "SWISS",
+        gameMode: "ONE_VS_ONE",
+        maxPlayers: 8,
+      }),
+    });
+    assert.equal(eventResponse.response.status, 201);
+    const eventId = eventResponse.data.id;
+
+    const firstJoin = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: player.cookie },
+      body: JSON.stringify({ deckId: player.deck._id }),
+    });
+    assert.equal(firstJoin.response.status, 201);
+
+    const entriesBeforeStart = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      headers: { cookie: organizer.cookie },
+    });
+    const removableEntry = entriesBeforeStart.data.find((entry) => String(entry.playerId?._id || entry.playerId) === String(player.player._id || player.player.id));
+
+    const dropBeforeStart = await request(baseUrl, `/api/events/${eventId}/entries/${removableEntry._id}/drop`, {
+      method: "PATCH",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(dropBeforeStart.response.status, 409);
+
+    const removeBeforeStart = await request(baseUrl, `/api/events/${eventId}/entries/${removableEntry._id}`, {
+      method: "DELETE",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(removeBeforeStart.response.status, 200);
+
+    const secondJoin = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: player.cookie },
+      body: JSON.stringify({ deckId: player.deck._id }),
+    });
+    assert.equal(secondJoin.response.status, 201);
+
+    const organizerJoin = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: organizer.cookie },
+      body: JSON.stringify({ deckId: organizer.deck._id }),
+    });
+    assert.equal(organizerJoin.response.status, 201);
+
+    const start = await request(baseUrl, `/api/events/${eventId}/start`, {
+      method: "PATCH",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(start.response.status, 200);
+
+    const entriesAfterStart = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      headers: { cookie: organizer.cookie },
+    });
+    const droppableEntry = entriesAfterStart.data.find((entry) => String(entry.playerId?._id || entry.playerId) === String(player.player._id || player.player.id));
+
+    const removeAfterStart = await request(baseUrl, `/api/events/${eventId}/entries/${droppableEntry._id}`, {
+      method: "DELETE",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(removeAfterStart.response.status, 409);
+
+    const dropAfterStart = await request(baseUrl, `/api/events/${eventId}/entries/${droppableEntry._id}/drop`, {
+      method: "PATCH",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(dropAfterStart.response.status, 200);
+    assert.equal(dropAfterStart.data.entry.status, "DROPPED");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

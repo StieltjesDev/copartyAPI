@@ -24,20 +24,7 @@ function getRatingDelta(resultType) {
   }
 }
 
-function getCommanderDelta(placement) {
-  switch (placement) {
-    case 1:
-      return 12;
-    case 2:
-      return 6;
-    case 3:
-      return 3;
-    case 4:
-      return 1;
-    default:
-      return 0;
-  }
-}
+
 
 export function buildRatingUpdates({ event, participants, entries, decks }) {
   const entryMap = new Map(entries.map((entry) => [String(entry._id), entry]));
@@ -52,9 +39,7 @@ export function buildRatingUpdates({ event, participants, entries, decks }) {
       participant,
       entry,
       deck,
-      delta: event.gameMode === "COMMANDER_MULTIPLAYER"
-        ? getCommanderDelta(participant.placement)
-        : delta,
+      delta,
       gameMode: event.gameMode,
       format: deck?.format ?? "CUSTOM",
     };
@@ -315,3 +300,4 @@ export async function getDeckLeaderboard(filters = {}) {
     .sort({ rating: -1, matchesPlayed: -1, updatedAt: 1 })
     .lean();
 }
+

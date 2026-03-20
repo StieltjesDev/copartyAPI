@@ -19,6 +19,13 @@ import { parsePositiveInteger, requireFields } from "../lib/validation.js";
 
 const COMMANDER_MULTIPLAYER_FORMATS = ["COMMANDER", "COMMANDER_500", "COMMANDER_250", "COMMANDER_15"];
 const COMMANDER_FORMATS = [...COMMANDER_MULTIPLAYER_FORMATS, "COMMANDER_DUEL"];
+const ALLOWED_PAIRINGS_BY_GAME_MODE = {
+  ONE_VS_ONE: ["SWISS", "ROUND_ROBIN", "SINGLE_ELIMINATION", "DOUBLE_ELIMINATION", "POD"],
+  COMMANDER_MULTIPLAYER: ["SWISS"],
+  TWO_HEADED_GIANT: ["SWISS"],
+  TWO_VS_TWO: ["SWISS"],
+  MULTIPLAYER_FREE_FOR_ALL: ["SWISS"],
+};
 
 function resolveGameModeForFormat(format, requestedGameMode) {
   if (!format || format === "CUSTOM") {
@@ -26,6 +33,11 @@ function resolveGameModeForFormat(format, requestedGameMode) {
   }
 
   return COMMANDER_MULTIPLAYER_FORMATS.includes(format) ? "COMMANDER_MULTIPLAYER" : "ONE_VS_ONE";
+}
+
+function resolvePairingTypeForGameMode(gameMode, requestedPairingType) {
+  const allowedPairings = ALLOWED_PAIRINGS_BY_GAME_MODE[gameMode] ?? ALLOWED_PAIRINGS_BY_GAME_MODE.ONE_VS_ONE;
+  return allowedPairings.includes(requestedPairingType) ? requestedPairingType : allowedPairings[0];
 }
 
 function normalizeEventPayload(payload = {}) {
@@ -36,6 +48,7 @@ function normalizeEventPayload(payload = {}) {
   }
 
   normalized.gameMode = resolveGameModeForFormat(normalized.format, normalized.gameMode);
+  normalized.pairingType = resolvePairingTypeForGameMode(normalized.gameMode, normalized.pairingType ?? "SWISS");
   return normalized;
 }
 
@@ -335,13 +348,42 @@ export async function deleteLeaveEvent(req, res, next) {
   }
 }
 
+export async function removeEventEntry(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.eventId);
+
+    const event = await syncEventLifecycle(req.params.eventId);
+    if (!["DRAFT", "SCHEDULED"].includes(event.status)) {
+      throw invalidStateError("Remocao de inscricao so e permitida antes do evento iniciar");
+    }
+
+    const filter = {
+      _id: req.params.entryId,
+      eventId: req.params.eventId,
+      entryType: "PLAYER",
+    };
+
+    const entry = await EventEntry.findOneAndDelete(filter);
+    if (!entry) {
+      throw notFoundError("Inscricao nao encontrada");
+    }
+
+    return res.status(200).json({
+      message: "Inscricao removida com sucesso!",
+      entry,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function dropEventEntry(req, res, next) {
   try {
     await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.eventId);
 
     const event = await syncEventLifecycle(req.params.eventId);
-    if (!["DRAFT", "SCHEDULED", "ONGOING"].includes(event.status)) {
-      throw invalidStateError("Nao e possivel aplicar drop em evento finalizado ou cancelado");
+    if (event.status !== "ONGOING") {
+      throw invalidStateError("Drop so pode ser aplicado depois que o evento iniciar");
     }
 
     const filter = {
@@ -390,7 +432,7 @@ export async function getEventEntries(req, res, next) {
     requireFields(req.params, ["eventId"]);
     const entries = await EventEntry.find({ eventId: req.params.eventId })
       .populate("playerId", "displayName")
-      .populate("deckId", "name format commander")
+      .populate("deckId", "name format commander link")
       .lean();
     res.status(200).json(entries);
   } catch (error) {
@@ -503,3 +545,6 @@ export async function getStandings(req, res, next) {
     next(error);
   }
 }
+
+
+
