@@ -106,21 +106,58 @@ function setupInMemoryPersistence() {
       this.passwordHash = `hashed:${this._plainPassword}`;
     }
     this.createdAt ||= new Date().toISOString();
-    store.users.push({
+
+    const duplicateUsername = store.users.find(
+      (item) => String(item._id) !== String(this._id) && item.username === this.username
+    );
+    if (duplicateUsername) {
+      const error = new Error("duplicate username");
+      error.code = 11000;
+      error.keyPattern = { username: 1 };
+      throw error;
+    }
+
+    if (this.email) {
+      const duplicateEmail = store.users.find(
+        (item) => String(item._id) !== String(this._id) && item.email === this.email
+      );
+      if (duplicateEmail) {
+        const error = new Error("duplicate email");
+        error.code = 11000;
+        error.keyPattern = { email: 1 };
+        throw error;
+      }
+    }
+
+    const plain = {
       _id: this._id,
       username: this.username,
       email: this.email ?? null,
       role: this.role ?? "user",
       passwordHash: this.passwordHash,
       createdAt: this.createdAt,
-    });
+    };
+
+    const index = store.users.findIndex((item) => String(item._id) === String(this._id));
+    if (index >= 0) {
+      store.users[index] = plain;
+    } else {
+      store.users.push(plain);
+    }
+
     return this;
   };
   User.prototype.comparePassword = async function comparePassword(password) {
     return this.passwordHash === `hashed:${password}`;
   };
   User.find = () => query(store.users);
-  User.findById = (id) => query(store.users.find((item) => String(item._id) === String(id)) ?? null);
+  User.findById = (id) => {
+    const user = store.users.find((item) => String(item._id) === String(id)) ?? null;
+    return query(user ? attachSave({
+      ...user,
+      comparePassword: async (password) => user.passwordHash === `hashed:${password}`,
+    }, "users", store) : null);
+  };
   User.findOne = (filter) => {
     const user = store.users.find((item) => {
       if (filter.$or) {
@@ -142,7 +179,7 @@ function setupInMemoryPersistence() {
   Player.prototype.save = async function savePlayer() {
     this._id ||= makeId("player", counter);
     this.createdAt ||= new Date().toISOString();
-    store.players.push({
+    const plain = {
       _id: this._id,
       userId: this.userId,
       displayName: this.displayName,
@@ -151,11 +188,22 @@ function setupInMemoryPersistence() {
       losses: this.losses ?? 0,
       draws: this.draws ?? 0,
       createdAt: this.createdAt,
-    });
+    };
+
+    const index = store.players.findIndex((item) => String(item._id) === String(this._id));
+    if (index >= 0) {
+      store.players[index] = plain;
+    } else {
+      store.players.push(plain);
+    }
+
     return this;
   };
   Player.find = () => query(store.players);
-  Player.findOne = (filter) => query(store.players.find((item) => matchesFilter(item, filter)) ?? null);
+  Player.findOne = (filter) => {
+    const player = store.players.find((item) => matchesFilter(item, filter)) ?? null;
+    return query(player ? attachSave({ ...player }, "players", store) : null);
+  };
   Player.findById = (id) => query(store.players.find((item) => String(item._id) === String(id)) ?? null);
   Player.findByIdAndUpdate = async (id, update) => {
     const player = store.players.find((item) => String(item._id) === String(id));
@@ -207,6 +255,7 @@ function setupInMemoryPersistence() {
       name: this.name,
       description: this.description ?? null,
       dateTime: this.dateTime,
+      format: this.format ?? "CUSTOM",
       pairingType: this.pairingType,
       status: this.status ?? "DRAFT",
       gameMode: this.gameMode,
@@ -252,6 +301,12 @@ function setupInMemoryPersistence() {
   };
   EventEntry.find = (filter = {}) => query(store.entries.filter((item) => matchesFilter(item, filter)));
   EventEntry.findOne = (filter = {}) => query(store.entries.find((item) => matchesFilter(item, filter)) ?? null);
+  EventEntry.findOneAndUpdate = async (filter, update) => {
+    const entry = store.entries.find((item) => matchesFilter(item, filter));
+    if (!entry) return null;
+    Object.assign(entry, update);
+    return { ...entry };
+  };
   EventEntry.findById = (id) => query(store.entries.find((item) => String(item._id) === String(id)) ?? null);
   EventEntry.findOneAndDelete = async (filter) => {
     const index = store.entries.findIndex((item) => matchesFilter(item, filter));
@@ -509,6 +564,12 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
     });
     assert.equal(join2.response.status, 201);
 
+    const start = await request(baseUrl, `/api/events/${eventId}/start`, {
+      method: "PATCH",
+      headers: { cookie },
+    });
+    assert.equal(start.response.status, 200);
+
     const round = await request(baseUrl, `/api/events/${eventId}/rounds/1/generate`, {
       method: "POST",
       headers: { cookie },
@@ -568,6 +629,9 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
     });
     assert.equal(standings.response.status, 200);
     assert.equal(standings.data[0].points, 3);
+    assert.equal(typeof standings.data[0].buchholz, "number");
+    assert.equal(typeof standings.data[0].opponentMatchWinRate, "number");
+    assert.equal(standings.data[0].position, 1);
 
     const rankings = await request(baseUrl, "/api/rankings/players?gameMode=ONE_VS_ONE", {
       headers: { cookie },
@@ -667,6 +731,12 @@ test("fluxo HTTP completo Commander multiplayer", async () => {
       });
       assert.equal(join.response.status, 201);
     }
+
+    const start = await request(baseUrl, `/api/events/${eventId}/start`, {
+      method: "PATCH",
+      headers: { cookie: cookies[0] },
+    });
+    assert.equal(start.response.status, 200);
 
     const round = await request(baseUrl, `/api/events/${eventId}/rounds/1/generate`, {
       method: "POST",
@@ -778,6 +848,12 @@ test("fluxos HTTP negativos de autorizacao e estado invalido", async () => {
       headers: { "content-type": "application/json", cookie: outsider.cookie },
       body: JSON.stringify({ deckId: outsider.deck._id }),
     });
+
+    const start = await request(baseUrl, `/api/events/${eventId}/start`, {
+      method: "PATCH",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(start.response.status, 200);
 
     const forbiddenRound = await request(baseUrl, `/api/events/${eventId}/rounds/1/generate`, {
       method: "POST",
@@ -1144,7 +1220,29 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
     });
     assert.equal(finish.response.status, 200);
     assert.equal(finish.data.message, "Evento finalizado com sucesso!");
-    assert.equal(finish.data.event.status, "COMPLETED");
+    assert.equal(finish.data.event.status, "FINISHED");
+
+    const completedUpdate = await request(baseUrl, `/api/events/${eventId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: organizer.cookie },
+      body: JSON.stringify({
+        description: "Tentativa de editar evento completo",
+      }),
+    });
+    assert.equal(completedUpdate.response.status, 403);
+
+    const joinFinished = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: organizer.cookie },
+      body: JSON.stringify({ deckId: organizer.deck._id }),
+    });
+    assert.equal(joinFinished.response.status, 400);
+
+    const generateFinished = await request(baseUrl, `/api/events/${eventId}/rounds/2/generate`, {
+      method: "POST",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(generateFinished.response.status, 409);
 
     const alreadyCompleted = await request(baseUrl, `/api/events/${eventId}/finish`, {
       method: "PATCH",
@@ -1213,6 +1311,169 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
     });
     assert.equal(overdueStart.response.status, 409);
     assert.equal(overdueStart.data.error.message, "Evento cancelado nao pode ser iniciado");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("evento aplica formato oficial e bloqueia deck incompativel na inscricao", async () => {
+  setupInMemoryPersistence();
+
+  const app = createApp();
+  const server = app.listen(0);
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const organizer = await createUserAndSession(baseUrl, {
+      username: "format-organizer",
+      email: "format-organizer@test.com",
+      role: "admin",
+      displayName: "Format Organizer",
+      deckName: "Commander Table",
+      format: "COMMANDER",
+      commander: "Atraxa",
+    });
+
+    const challenger = await createUserAndSession(baseUrl, {
+      username: "format-player",
+      email: "format-player@test.com",
+      role: "user",
+      displayName: "Format Player",
+      deckName: "Pioneer Deck",
+      format: "PIONEER",
+    });
+
+    const deckResponse = await request(baseUrl, "/api/decks/me", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: challenger.cookie },
+      body: JSON.stringify({
+        name: "Commander Legal Deck",
+        format: "COMMANDER",
+        commander: "Kinnan",
+        link: "https://example.com/format-player-commander",
+      }),
+    });
+    assert.equal(deckResponse.response.status, 201);
+
+    const eventResponse = await request(baseUrl, "/api/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: organizer.cookie,
+      },
+      body: JSON.stringify({
+        name: "Commander League",
+        description: "Evento com formato travado",
+        dateTime: "2099-03-01T10:00:00.000Z",
+        format: "COMMANDER",
+        pairingType: "SWISS",
+        gameMode: "ONE_VS_ONE",
+        maxPlayers: 16,
+      }),
+    });
+    assert.equal(eventResponse.response.status, 201);
+    const eventId = eventResponse.data.id;
+
+    const event = await request(baseUrl, `/api/events/${eventId}`, {
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(event.response.status, 200);
+    assert.equal(event.data.format, "COMMANDER");
+    assert.equal(event.data.gameMode, "COMMANDER_MULTIPLAYER");
+
+    const incompatibleJoin = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: challenger.cookie },
+      body: JSON.stringify({ deckId: challenger.deck._id }),
+    });
+    assert.equal(incompatibleJoin.response.status, 400);
+    assert.equal(incompatibleJoin.data.error.message, "Deck incompativel com o formato do evento");
+
+    const compatibleJoin = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: challenger.cookie },
+      body: JSON.stringify({ deckId: deckResponse.data._id }),
+    });
+    assert.equal(compatibleJoin.response.status, 201);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("perfil permite editar username e email unico e sincroniza displayName do player", async () => {
+  setupInMemoryPersistence();
+
+  const app = createApp();
+  const server = app.listen(0);
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const userOne = await request(baseUrl, "/api/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "profile-user",
+        password: "123456",
+        role: "user",
+      }),
+    });
+    assert.equal(userOne.response.status, 201);
+
+    const loginOne = await request(baseUrl, "/api/users/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login: "profile-user", password: "123456" }),
+    });
+    const cookieOne = loginOne.response.headers.get("set-cookie");
+    assert.ok(cookieOne);
+
+    const createPlayer = await request(baseUrl, "/api/players", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: cookieOne },
+      body: JSON.stringify({}),
+    });
+    assert.equal(createPlayer.response.status, 201);
+    assert.equal(createPlayer.data.displayName, "profile-user");
+
+    const userTwo = await request(baseUrl, "/api/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "taken-user",
+        email: "taken@test.com",
+        password: "123456",
+        role: "user",
+      }),
+    });
+    assert.equal(userTwo.response.status, 201);
+
+    const updateProfile = await request(baseUrl, `/api/users/${userOne.data.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: cookieOne },
+      body: JSON.stringify({
+        username: "profile-user-renamed",
+        email: "profile@test.com",
+      }),
+    });
+    assert.equal(updateProfile.response.status, 200);
+    assert.equal(updateProfile.data.username, "profile-user-renamed");
+    assert.equal(updateProfile.data.email, "profile@test.com");
+
+    const myPlayer = await request(baseUrl, "/api/players/me", {
+      headers: { cookie: cookieOne },
+    });
+    assert.equal(myPlayer.response.status, 200);
+    assert.equal(myPlayer.data.displayName, "profile-user-renamed");
+
+    const duplicateEmail = await request(baseUrl, `/api/users/${userOne.data.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: cookieOne },
+      body: JSON.stringify({ email: "taken@test.com" }),
+    });
+    assert.equal(duplicateEmail.response.status, 400);
+    assert.equal(duplicateEmail.data.error.message, "email ja cadastrado!");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

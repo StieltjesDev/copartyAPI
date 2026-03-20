@@ -15,8 +15,24 @@ function asId(value) {
   return String(value);
 }
 
+async function normalizeLegacyFinishedEvent(event) {
+  if (!event || event.status !== "COMPLETED") {
+    return event;
+  }
+
+  event.status = "FINISHED";
+  await event.save();
+  return event;
+}
+
 async function persistAutoCancelledEvent(event) {
-  if (!event || event.status !== "SCHEDULED") {
+  if (!event) {
+    return event;
+  }
+
+  event = await normalizeLegacyFinishedEvent(event);
+
+  if (event.status !== "SCHEDULED") {
     return event;
   }
 
@@ -50,6 +66,31 @@ function shuffle(items) {
     [copy[index], copy[randomIndex]] = [copy[randomIndex], copy[index]];
   }
   return copy;
+}
+
+function safeNumber(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function calculateOpponentMatchWinRate(opponents) {
+  if (!opponents.length) {
+    return 0;
+  }
+
+  const total = opponents.reduce((sum, opponent) => {
+    const wins = safeNumber(opponent.wins);
+    const draws = safeNumber(opponent.draws);
+    const losses = safeNumber(opponent.losses);
+    const matchesPlayed = wins + draws + losses;
+
+    if (!matchesPlayed) {
+      return sum;
+    }
+
+    return sum + (((wins * 3) + draws) / (matchesPlayed * 3));
+  }, 0);
+
+  return total / opponents.length;
 }
 
 export function calculateStandings(entries, matches, participants) {
@@ -103,12 +144,37 @@ export function calculateStandings(entries, matches, participants) {
     }
   }
 
-  return [...standings.values()].sort((left, right) => (
-    right.points - left.points ||
-    right.wins - left.wins ||
-    right.draws - left.draws ||
-    left.losses - right.losses
-  ));
+  const completedMatches = matches.filter((match) => match.status === "COMPLETED");
+  const opponentMap = buildOpponentMap(completedMatches, participants);
+  const rows = [...standings.values()].map((row) => {
+    const opponentRows = [...(opponentMap.get(asId(row.eventEntryId)) ?? new Set())]
+      .map((opponentEntryId) => standings.get(opponentEntryId))
+      .filter(Boolean);
+
+    const buchholz = opponentRows.reduce((sum, opponent) => sum + safeNumber(opponent.points), 0);
+    const opponentMatchWinRate = calculateOpponentMatchWinRate(opponentRows);
+
+    return {
+      ...row,
+      buchholz,
+      opponentMatchWinRate,
+    };
+  });
+
+  return rows
+    .sort((left, right) => (
+      right.points - left.points ||
+      right.buchholz - left.buchholz ||
+      right.opponentMatchWinRate - left.opponentMatchWinRate ||
+      right.wins - left.wins ||
+      right.draws - left.draws ||
+      left.losses - right.losses ||
+      asId(left.playerId).localeCompare(asId(right.playerId), "pt-BR")
+    ))
+    .map((row, index) => ({
+      ...row,
+      position: index + 1,
+    }));
 }
 
 function buildOpponentMap(matches, participants) {
@@ -239,6 +305,10 @@ export async function generateRound(eventId, round, auditContext = {}) {
       throw validationError("Geracao de rodadas automatica disponivel apenas para ONE_VS_ONE e COMMANDER_MULTIPLAYER");
     }
 
+    if (event.status !== "ONGOING") {
+      throw invalidStateError("Rodadas so podem ser geradas para eventos em andamento");
+    }
+
     const currentRoundMatches = await Match.find({ eventId, round }).lean();
     if (currentRoundMatches.length > 0) {
       throw invalidStateError("A rodada informada ja foi gerada");
@@ -340,6 +410,11 @@ export async function getRoundMatches(eventId, round) {
 
 export async function closeRound(eventId, round, auditContext = {}) {
   return withOperationalLock(`round:close:${eventId}:${round}`, "Fechamento de rodada", async () => {
+    const event = await syncEventLifecycle(eventId);
+    if (event.status !== "ONGOING") {
+      throw invalidStateError("Apenas eventos em andamento podem fechar rodadas");
+    }
+
     const matches = await Match.find({ eventId, round }).lean();
     if (!matches.length) {
       throw notFoundError("Rodada nao encontrada");
@@ -381,7 +456,7 @@ export async function finishEvent(eventId, auditContext = {}) {
   return withOperationalLock(`event:finish:${eventId}`, "Finalizacao do evento", async () => {
     const event = await syncEventLifecycle(eventId);
 
-    if (event.status === "COMPLETED") {
+    if (["FINISHED", "COMPLETED"].includes(event.status)) {
       throw invalidStateError("Evento ja finalizado");
     }
 
@@ -396,7 +471,7 @@ export async function finishEvent(eventId, auditContext = {}) {
       updatedAt: event.updatedAt,
     };
 
-    event.status = "COMPLETED";
+    event.status = "FINISHED";
     await event.save();
 
     await writeAuditLog({
@@ -426,7 +501,7 @@ export async function startEvent(eventId, auditContext = {}) {
       throw invalidStateError("Evento cancelado nao pode ser iniciado");
     }
 
-    if (event.status === "COMPLETED") {
+    if (["FINISHED", "COMPLETED"].includes(event.status)) {
       throw invalidStateError("Evento finalizado nao pode ser iniciado");
     }
 
@@ -463,7 +538,7 @@ export async function cancelEvent(eventId, auditContext = {}) {
   return withOperationalLock(`event:cancel:${eventId}`, "Cancelamento do evento", async () => {
     const event = await syncEventLifecycle(eventId);
 
-    if (event.status === "COMPLETED") {
+    if (["FINISHED", "COMPLETED"].includes(event.status)) {
       throw invalidStateError("Evento finalizado nao pode ser cancelado");
     }
 
@@ -512,10 +587,9 @@ export async function getEventStandings(eventId) {
 
   const standings = calculateStandings(entries, matches, participants);
 
-  return standings.map((row, index) => {
+  return standings.map((row) => {
     const entry = entries.find((item) => asId(item._id) === asId(row.eventEntryId));
     return {
-      position: index + 1,
       ...row,
       player: entry?.playerId ?? null,
       deck: entry?.deckId ?? null,

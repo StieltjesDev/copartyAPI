@@ -1,6 +1,6 @@
 import { Player } from "../models/Player.js";
+import { User } from "../models/User.js";
 import { forbiddenError, notFoundError, validationError } from "../lib/errors.js";
-import { requireFields } from "../lib/validation.js";
 
 export async function getPlayers(req, res, next) {
   try {
@@ -48,7 +48,6 @@ export async function getPlayerById(req, res, next) {
 
 export async function createPlayer(req, res, next) {
   try {
-    requireFields(req.body, ["displayName"]);
     const targetUserId = req.params.userId ?? req.user.userId;
 
     if (req.user.role !== "admin" && String(targetUserId) !== String(req.user.userId)) {
@@ -60,7 +59,19 @@ export async function createPlayer(req, res, next) {
       throw validationError("Ja existe player para este usuario");
     }
 
-    const player = new Player({ ...req.body, userId: targetUserId });
+    const user = req.user.role === "admin" && req.params.userId
+      ? await User.findById(targetUserId).select("username")
+      : { username: req.user.username };
+
+    if (!user) {
+      throw notFoundError("Usuario nao encontrado");
+    }
+
+    const player = new Player({
+      ...req.body,
+      displayName: user.username,
+      userId: targetUserId,
+    });
     await player.save();
 
     res.status(201).json(player);

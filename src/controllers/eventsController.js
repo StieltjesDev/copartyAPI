@@ -14,8 +14,30 @@ import {
   syncEventsLifecycle,
 } from "../service/event.js";
 import { listMatchesByEvent } from "../service/match.js";
-import { forbiddenError, notFoundError, validationError } from "../lib/errors.js";
+import { forbiddenError, invalidStateError, notFoundError, validationError } from "../lib/errors.js";
 import { parsePositiveInteger, requireFields } from "../lib/validation.js";
+
+const COMMANDER_MULTIPLAYER_FORMATS = ["COMMANDER", "COMMANDER_500", "COMMANDER_250", "COMMANDER_15"];
+const COMMANDER_FORMATS = [...COMMANDER_MULTIPLAYER_FORMATS, "COMMANDER_DUEL"];
+
+function resolveGameModeForFormat(format, requestedGameMode) {
+  if (!format || format === "CUSTOM") {
+    return requestedGameMode;
+  }
+
+  return COMMANDER_MULTIPLAYER_FORMATS.includes(format) ? "COMMANDER_MULTIPLAYER" : "ONE_VS_ONE";
+}
+
+function normalizeEventPayload(payload = {}) {
+  const normalized = { ...payload };
+
+  if (!normalized.format) {
+    normalized.format = "CUSTOM";
+  }
+
+  normalized.gameMode = resolveGameModeForFormat(normalized.format, normalized.gameMode);
+  return normalized;
+}
 
 async function ensureOrganizerOrAdmin(userId, role, eventId) {
   const event = await Event.findById(eventId).select("createdByUserId").lean();
@@ -75,8 +97,9 @@ export async function createEvent(req, res, next) {
       throw validationError("Evento agendado precisa ter data futura");
     }
 
+    const payload = normalizeEventPayload(req.body);
     const event = new Event({
-      ...req.body,
+      ...payload,
       status: isDraft ? "DRAFT" : "SCHEDULED",
       dateTime,
       createdByUserId: req.user.userId,
@@ -116,7 +139,7 @@ export async function putEvent(req, res, next) {
       throw forbiddenError("Acao nao permitida!");
     }
 
-    if (["ONGOING", "COMPLETED", "CANCELLED"].includes(event.status)) {
+    if (["ONGOING", "COMPLETED", "FINISHED", "CANCELLED"].includes(event.status)) {
       throw forbiddenError("Evento ja terminou ou esta ocorrendo!");
     }
 
@@ -132,7 +155,9 @@ export async function putEvent(req, res, next) {
       req.body.dateTime = dateTime;
     }
 
-    const updatedEvent = await Event.findByIdAndUpdate(id, req.body, {
+    const currentEvent = event?.toObject ? event.toObject() : event;
+    const payload = normalizeEventPayload({ ...currentEvent, ...req.body });
+    const updatedEvent = await Event.findByIdAndUpdate(id, payload, {
       new: true,
       runValidators: true,
     });
@@ -191,9 +216,13 @@ export async function postEnterEvent(req, res, next) {
       throw validationError("ID do Event e obrigatorio!");
     }
 
-    const event = await Event.findById(eventId);
+    const event = await syncEventLifecycle(eventId);
     if (!event) {
       throw notFoundError("Event nao encontrado");
+    }
+
+    if (!['DRAFT', 'SCHEDULED'].includes(event.status)) {
+      throw validationError("Inscricoes so ficam abertas para eventos em rascunho ou agendados");
     }
 
     if (event.dateTime < new Date()) {
@@ -207,13 +236,25 @@ export async function postEnterEvent(req, res, next) {
       throw notFoundError("Player nao encontrado para o usuario autenticado");
     }
 
-    const deck = await Deck.findById(req.body.deckId).select("playerId").lean();
+    const deck = await Deck.findById(req.body.deckId).select("playerId format commander isActive").lean();
     if (!deck) {
       throw notFoundError("Deck nao encontrado");
     }
 
     if (String(deck.playerId) !== String(player._id)) {
       throw forbiddenError("Deck nao pertence ao player autenticado");
+    }
+
+    if (!deck.isActive) {
+      throw validationError("Somente decks ativos podem entrar em eventos");
+    }
+
+    if (event.format && event.format !== "CUSTOM" && deck.format !== event.format) {
+      throw validationError("Deck incompativel com o formato do evento");
+    }
+
+    if (COMMANDER_FORMATS.includes(deck.format) && !deck.commander) {
+      throw validationError("Deck de commander precisa ter comandante cadastrado");
     }
 
     const checkEntry = await EventEntry.findOne({
@@ -260,9 +301,13 @@ export async function deleteLeaveEvent(req, res, next) {
       throw validationError("ID do Event e obrigatorio!");
     }
 
-    const event = await Event.findById(eventId);
+    const event = await syncEventLifecycle(eventId);
     if (!event) {
       throw notFoundError("Event nao encontrado");
+    }
+
+    if (!['DRAFT', 'SCHEDULED'].includes(event.status)) {
+      throw validationError("So e possivel cancelar inscricao antes do evento iniciar");
     }
 
     if (event.dateTime < new Date()) {
@@ -285,6 +330,41 @@ export async function deleteLeaveEvent(req, res, next) {
     }
 
     return res.status(200).json({ message: "Inscricao cancelada com sucesso!" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function dropEventEntry(req, res, next) {
+  try {
+    await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.eventId);
+
+    const event = await syncEventLifecycle(req.params.eventId);
+    if (!["DRAFT", "SCHEDULED", "ONGOING"].includes(event.status)) {
+      throw invalidStateError("Nao e possivel aplicar drop em evento finalizado ou cancelado");
+    }
+
+    const filter = {
+      _id: req.params.entryId,
+      eventId: req.params.eventId,
+      entryType: "PLAYER",
+    };
+
+    const currentEntry = await EventEntry.findOne(filter).lean();
+    if (!currentEntry) {
+      throw notFoundError("Inscricao nao encontrada");
+    }
+
+    if (currentEntry.status === "DROPPED") {
+      throw invalidStateError("Inscricao ja estava dropada");
+    }
+
+    const entry = await EventEntry.findOneAndUpdate(filter, { status: "DROPPED" }, { new: true });
+
+    return res.status(200).json({
+      message: "Inscricao marcada como drop com sucesso!",
+      entry,
+    });
   } catch (err) {
     next(err);
   }

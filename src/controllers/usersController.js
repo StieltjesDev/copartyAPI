@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { User } from "../models/User.js";
+import { Player } from "../models/Player.js";
 import { configurationError, forbiddenError, invalidStateError, notFoundError, validationError } from "../lib/errors.js";
 import { requireFields } from "../lib/validation.js";
 
@@ -158,6 +159,62 @@ export async function findUserById(req, res, next) {
 
     res.status(200).json(formatUser(user));
   } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateUser(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    if (req.user.role !== "admin" && req.user.userId !== id) {
+      throw forbiddenError("Acao nao permitida!");
+    }
+
+    const user = await User.findById(id);
+    if (!user) {
+      throw notFoundError("Usuario nao encontrado");
+    }
+
+    if (req.body.username != null) {
+      const username = String(req.body.username).trim();
+      const existingUser = await User.findOne({ username }).select("_id");
+      if (existingUser && String(existingUser._id) !== String(user._id)) {
+        throw validationError("username ja cadastrado!");
+      }
+      user.username = username;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "email")) {
+      const email = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
+      if (email) {
+        const existingUser = await User.findOne({ email }).select("_id");
+        if (existingUser && String(existingUser._id) !== String(user._id)) {
+          throw validationError("email ja cadastrado!");
+        }
+      }
+      user.email = email;
+    }
+
+    await user.save();
+
+    const player = await Player.findOne({ userId: user._id });
+    if (player) {
+      player.displayName = user.username;
+      await player.save();
+    }
+
+    res.status(200).json(formatUser(user));
+  } catch (err) {
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyPattern)[0];
+      throw validationError(`${field} ja cadastrado!`);
+    }
+
+    if (err.name === "ValidationError") {
+      throw validationError("Falha de validacao", Object.values(err.errors).map((error) => error.message));
+    }
+
     next(err);
   }
 }

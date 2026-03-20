@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import {
+  DECK_FORMATS,
   EVENT_GAME_MODES,
   EVENT_PAIRING_TYPES,
   EVENT_STATUSES,
@@ -21,6 +22,11 @@ const eventSchema = new mongoose.Schema(
     dateTime: {
       type: Date,
       required: [true, "Data e hora e obrigatoria"],
+    },
+    format: {
+      type: String,
+      enum: DECK_FORMATS,
+      default: "CUSTOM",
     },
     pairingType: {
       type: String,

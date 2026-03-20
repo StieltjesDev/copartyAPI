@@ -71,6 +71,49 @@ test("standings ignora match nao finalizada", () => {
   assert.equal(standings[1].points, 0);
 });
 
+test("standings aplica tie-breakers oficiais para desempatar mesma pontuacao", () => {
+  const entries = [
+    { _id: "entry-1", playerId: "player-1", deckId: "deck-1" },
+    { _id: "entry-2", playerId: "player-2", deckId: "deck-2" },
+    { _id: "entry-3", playerId: "player-3", deckId: "deck-3" },
+    { _id: "entry-4", playerId: "player-4", deckId: "deck-4" },
+    { _id: "entry-5", playerId: "player-5", deckId: "deck-5" },
+    { _id: "entry-6", playerId: "player-6", deckId: "deck-6" },
+  ];
+  const matches = [
+    { _id: "match-1", status: "COMPLETED" },
+    { _id: "match-2", status: "COMPLETED" },
+    { _id: "match-3", status: "COMPLETED" },
+    { _id: "match-4", status: "COMPLETED" },
+    { _id: "match-5", status: "COMPLETED" },
+    { _id: "match-6", status: "COMPLETED" },
+  ];
+  const participants = [
+    { matchId: "match-1", eventEntryId: "entry-1", resultType: "WIN", pointsEarned: 3 },
+    { matchId: "match-1", eventEntryId: "entry-2", resultType: "LOSS", pointsEarned: 0 },
+    { matchId: "match-2", eventEntryId: "entry-3", resultType: "WIN", pointsEarned: 3 },
+    { matchId: "match-2", eventEntryId: "entry-4", resultType: "LOSS", pointsEarned: 0 },
+    { matchId: "match-3", eventEntryId: "entry-5", resultType: "WIN", pointsEarned: 3 },
+    { matchId: "match-3", eventEntryId: "entry-6", resultType: "LOSS", pointsEarned: 0 },
+    { matchId: "match-4", eventEntryId: "entry-1", resultType: "WIN", pointsEarned: 3 },
+    { matchId: "match-4", eventEntryId: "entry-3", resultType: "LOSS", pointsEarned: 0 },
+    { matchId: "match-5", eventEntryId: "entry-2", resultType: "WIN", pointsEarned: 3 },
+    { matchId: "match-5", eventEntryId: "entry-5", resultType: "LOSS", pointsEarned: 0 },
+    { matchId: "match-6", eventEntryId: "entry-4", resultType: "LOSS", pointsEarned: 0 },
+    { matchId: "match-6", eventEntryId: "entry-6", resultType: "WIN", pointsEarned: 3 },
+  ];
+
+  const standings = calculateStandings(entries, matches, participants);
+
+  assert.equal(standings[0].eventEntryId, "entry-1");
+  assert.equal(standings[1].eventEntryId, "entry-2");
+  assert.equal(standings[2].eventEntryId, "entry-3");
+  assert.equal(standings[1].points, standings[2].points);
+  assert.equal(standings[1].buchholz > standings[2].buchholz, true);
+  assert.equal(standings[0].position, 1);
+  assert.equal(typeof standings[0].opponentMatchWinRate, "number");
+});
+
 test("commander permite gerar mesas multiplayer com fallback seguro", () => {
   const entries = [
     { _id: "entry-1" },

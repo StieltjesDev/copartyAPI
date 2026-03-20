@@ -29,7 +29,7 @@ export const EVENT_STATUSES = [
   "DRAFT",
   "SCHEDULED",
   "ONGOING",
-  "COMPLETED",
+  "FINISHED",
   "CANCELLED",
 ];
 
