@@ -1401,6 +1401,162 @@ test("evento aplica formato oficial e bloqueia deck incompativel na inscricao", 
   }
 });
 
+test("drop remove inscrito dos proximos pareamentos e mantem standings", async () => {
+  setupInMemoryPersistence();
+
+  const app = createApp();
+  const server = app.listen(0);
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const organizer = await createUserAndSession(baseUrl, {
+      username: "drop-organizer",
+      email: "drop-organizer@test.com",
+      role: "admin",
+      displayName: "Drop Organizer",
+      deckName: "Drop Deck A",
+    });
+    const playerTwo = await createUserAndSession(baseUrl, {
+      username: "drop-player-two",
+      email: "drop-player-two@test.com",
+      role: "user",
+      displayName: "Drop Player Two",
+      deckName: "Drop Deck B",
+    });
+    const playerThree = await createUserAndSession(baseUrl, {
+      username: "drop-player-three",
+      email: "drop-player-three@test.com",
+      role: "user",
+      displayName: "Drop Player Three",
+      deckName: "Drop Deck C",
+    });
+    const playerFour = await createUserAndSession(baseUrl, {
+      username: "drop-player-four",
+      email: "drop-player-four@test.com",
+      role: "user",
+      displayName: "Drop Player Four",
+      deckName: "Drop Deck D",
+    });
+
+    const eventResponse = await request(baseUrl, "/api/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: organizer.cookie,
+      },
+      body: JSON.stringify({
+        name: "Drop Cup",
+        description: "Evento para testar drop",
+        dateTime: "2099-04-01T10:00:00.000Z",
+        format: "MODERN",
+        pairingType: "SWISS",
+        gameMode: "ONE_VS_ONE",
+        maxPlayers: 16,
+      }),
+    });
+    assert.equal(eventResponse.response.status, 201);
+    const eventId = eventResponse.data.id;
+
+    await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: organizer.cookie },
+      body: JSON.stringify({ deckId: organizer.deck._id }),
+    });
+    await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: playerTwo.cookie },
+      body: JSON.stringify({ deckId: playerTwo.deck._id }),
+    });
+    await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: playerThree.cookie },
+      body: JSON.stringify({ deckId: playerThree.deck._id }),
+    });
+    await request(baseUrl, `/api/events/${eventId}/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: playerFour.cookie },
+      body: JSON.stringify({ deckId: playerFour.deck._id }),
+    });
+
+    const start = await request(baseUrl, `/api/events/${eventId}/start`, {
+      method: "PATCH",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(start.response.status, 200);
+
+    const roundOne = await request(baseUrl, `/api/events/${eventId}/rounds/1/generate`, {
+      method: "POST",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(roundOne.response.status, 201);
+    assert.equal(roundOne.data.length, 2);
+
+    const entriesResponse = await request(baseUrl, `/api/events/${eventId}/entries`, {
+      headers: { cookie: organizer.cookie },
+    });
+    const droppedPlayerId = playerFour.player._id || playerFour.player.id;
+
+    for (const match of roundOne.data) {
+      const participants = match.participants.map((participant, index) => ({
+        eventEntryId: participant.eventEntryId,
+        resultType: index === 0 ? "WIN" : "LOSS",
+        placement: index + 1,
+        score: index === 0 ? 2 : 0,
+        pointsEarned: index === 0 ? 3 : 0,
+        isWinner: index === 0,
+        eliminations: 0,
+      }));
+
+      const submitResult = await request(baseUrl, `/api/matches/${match._id}/result`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie: organizer.cookie },
+        body: JSON.stringify({ participants }),
+      });
+      assert.equal(submitResult.response.status, 200);
+
+      const completeMatch = await request(baseUrl, `/api/matches/${match._id}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie: organizer.cookie },
+        body: JSON.stringify({ status: "COMPLETED" }),
+      });
+      assert.equal(completeMatch.response.status, 200);
+    }
+
+    const closeRound = await request(baseUrl, `/api/events/${eventId}/rounds/1/close`, {
+      method: "POST",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(closeRound.response.status, 200);
+
+    const droppedEntry = entriesResponse.data.find((entry) => String(entry.playerId?._id || entry.playerId) === String(droppedPlayerId));
+    const drop = await request(baseUrl, `/api/events/${eventId}/entries/${droppedEntry._id}/drop`, {
+      method: "PATCH",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(drop.response.status, 200);
+    assert.equal(drop.data.entry.status, "DROPPED");
+
+    const roundTwo = await request(baseUrl, `/api/events/${eventId}/rounds/2/generate`, {
+      method: "POST",
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(roundTwo.response.status, 201);
+
+    const droppedEntryId = String(droppedEntry._id);
+    const roundTwoParticipants = roundTwo.data.flatMap((match) => match.participants.map((participant) => String(participant.eventEntryId)));
+    assert.equal(roundTwoParticipants.includes(droppedEntryId), false);
+
+    const standings = await request(baseUrl, `/api/events/${eventId}/standings`, {
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(standings.response.status, 200);
+    assert.equal(standings.data.some((row) => String(row.eventEntryId) === droppedEntryId), true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("perfil permite editar username e email unico e sincroniza displayName do player", async () => {
   setupInMemoryPersistence();
 
