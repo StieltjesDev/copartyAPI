@@ -460,11 +460,7 @@ async function createUserAndSession(baseUrl, { username, email, role = "user", d
 
   const cookie = login.response.headers.get("set-cookie");
 
-  const player = await request(baseUrl, "/api/players", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({ displayName }),
-  });
+
 
   const deck = await request(baseUrl, "/api/decks/me", {
     method: "POST",
@@ -476,6 +472,8 @@ async function createUserAndSession(baseUrl, { username, email, role = "user", d
       link: `https://moxfield.com/decks/${username}-deck`,
     }),
   });
+
+  const player = await request(baseUrl, "/api/players/me", { headers: { cookie } });
 
   return { cookie, player: player.data, deck: deck.data };
 }
@@ -509,15 +507,11 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
     const cookie = login.response.headers.get("set-cookie");
     assert.ok(cookie);
 
-    const playerResponse = await request(baseUrl, "/api/players", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie,
-      },
-      body: JSON.stringify({ displayName: "Organizer Player" }),
+    const playerResponse = await request(baseUrl, "/api/players/me", {
+      headers: { cookie },
     });
-    assert.equal(playerResponse.response.status, 201);
+    assert.equal(playerResponse.response.status, 200);
+    assert.equal(playerResponse.data.displayName, "organizer");
 
     const deckResponse = await request(baseUrl, "/api/decks/me", {
       method: "POST",
@@ -570,11 +564,8 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
     });
     const cookie2 = login2.response.headers.get("set-cookie");
 
-    await request(baseUrl, "/api/players", {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie: cookie2 },
-      body: JSON.stringify({ displayName: "Player Two" }),
-    });
+
+
     const deck2 = await request(baseUrl, "/api/decks/me", {
       method: "POST",
       headers: { "content-type": "application/json", cookie: cookie2 },
@@ -729,11 +720,7 @@ test("fluxo HTTP completo Commander multiplayer", async () => {
       const cookie = login.response.headers.get("set-cookie");
       cookies.push(cookie);
 
-      await request(baseUrl, "/api/players", {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({ displayName: `Commander ${index}` }),
-      });
+
 
       const deck = await request(baseUrl, "/api/decks/me", {
         method: "POST",
@@ -1739,8 +1726,7 @@ test("perfil permite editar username e email unico e sincroniza displayName do p
     assert.equal(updateProfile.data.username, "profile-user-renamed");
     assert.equal(updateProfile.data.email, "profile@test.com");
 
-    assert.equal(store.players.length, 1);
-    assert.equal(store.players[0].displayName, "profile-user-renamed");
+    assert.equal(store.players.find((player) => String(player.userId) === String(userOne.data.id)).displayName, "profile-user-renamed");
 
     const duplicateEmail = await request(baseUrl, `/api/users/${userOne.data.id}`, {
       method: "PUT",
@@ -1865,3 +1851,6 @@ test("organizador remove inscricao antes do inicio e drop so vale com evento em 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+
+

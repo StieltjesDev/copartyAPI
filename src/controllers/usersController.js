@@ -24,6 +24,8 @@ export async function getUsers(req, res, next) {
 }
 
 export async function createUser(req, res, next) {
+  let createdUser = null;
+
   try {
     requireFields(req.body, ["username", "email", "password"]);
     const { username, email, password, role } = req.body;
@@ -36,8 +38,21 @@ export async function createUser(req, res, next) {
     }
 
     await user.save();
+    createdUser = user;
+
+    const player = new Player({
+      userId: user._id,
+      displayName: user.username,
+    });
+    await player.save();
+
     res.status(201).json(formatUser(user));
   } catch (err) {
+    if (createdUser) {
+      await User.findOneAndDelete({ _id: createdUser._id });
+      await Player.findOneAndDelete({ userId: createdUser._id });
+    }
+
     if (err.code === 11000) {
       const field = Object.keys(err.keyPattern)[0];
       throw validationError(`${field} ja cadastrado!`);
@@ -241,3 +256,4 @@ export async function checkAuth(req, res, next) {
     next(err);
   }
 }
+
