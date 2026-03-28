@@ -8,7 +8,10 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "lint": "eslint .",
-    "test": "node --test"
+    "test": "node --test",
+    "seed:championship": "node scripts/seed-championship.js",
+    "seed:commander": "node scripts/seed-championship.js --gameMode COMMANDER_MULTIPLAYER --players 8",
+    "cleanup:championship": "node scripts/cleanup-championship.js"
   },
   "repository": {
     "type": "git",

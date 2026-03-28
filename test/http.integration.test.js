@@ -663,8 +663,10 @@ test("fluxo HTTP completo do MVP 1v1", async () => {
     });
     assert.equal(standings.response.status, 200);
     assert.equal(standings.data[0].points, 3);
-    assert.equal(typeof standings.data[0].buchholz, "number");
+    assert.equal(typeof standings.data[0].matchWinRate, "number");
     assert.equal(typeof standings.data[0].opponentMatchWinRate, "number");
+    assert.equal(typeof standings.data[0].gameWinRate, "number");
+    assert.equal(typeof standings.data[0].opponentGameWinRate, "number");
     assert.equal(standings.data[0].position, 1);
 
     const rankings = await request(baseUrl, "/api/rankings/players?gameMode=ONE_VS_ONE", {

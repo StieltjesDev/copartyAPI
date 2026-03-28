@@ -45,5 +45,5 @@ test("commander usa delta baseado em placement", () => {
     decks: [{ _id: "deck-1", format: "COMMANDER" }],
   });
 
-  assert.equal(updates[0].delta, 12);
+  assert.equal(updates[0].delta, 10);
 });

@@ -72,29 +72,116 @@ function safeNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
-function calculateOpponentMatchWinRate(opponents) {
+function floorTournamentPercentage(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.max(value, 1 / 3);
+}
+
+function calculateMatchWinRate(row) {
+  if (!row.tiebreakMatchesPlayed) {
+    return 0;
+  }
+
+  return floorTournamentPercentage(row.matchPointsForTiebreak / (row.tiebreakMatchesPlayed * 3));
+}
+
+function calculateGameWinRate(row) {
+  if (!row.gamePointsAvailable) {
+    return 0;
+  }
+
+  return floorTournamentPercentage(row.gamePointsForTiebreak / row.gamePointsAvailable);
+}
+
+function calculateAverageOpponentRate(opponents, selector) {
   if (!opponents.length) {
     return 0;
   }
 
-  const total = opponents.reduce((sum, opponent) => {
-    const wins = safeNumber(opponent.wins);
-    const draws = safeNumber(opponent.draws);
-    const losses = safeNumber(opponent.losses);
-    const matchesPlayed = wins + draws + losses;
-
-    if (!matchesPlayed) {
-      return sum;
-    }
-
-    return sum + (((wins * 3) + draws) / (matchesPlayed * 3));
-  }, 0);
-
+  const total = opponents.reduce((sum, opponent) => sum + selector(opponent), 0);
   return total / opponents.length;
 }
 
-export function calculateStandings(entries, matches, participants) {
+function isPositiveResult(resultType) {
+  return ["WIN", "DRAW", "BYE"].includes(resultType);
+}
+
+function buildCommanderStreaks(completedMatches, participants) {
+  const participantsByMatchId = new Map();
+
+  for (const participant of participants) {
+    const key = asId(participant.matchId);
+    const list = participantsByMatchId.get(key) ?? [];
+    list.push(participant);
+    participantsByMatchId.set(key, list);
+  }
+
+  const streaks = new Map();
+  const orderedMatches = [...completedMatches].sort((left, right) => (
+    safeNumber(left.round) - safeNumber(right.round) ||
+    safeNumber(left.tableNumber) - safeNumber(right.tableNumber) ||
+    asId(left._id).localeCompare(asId(right._id), "pt-BR")
+  ));
+
+  for (const match of orderedMatches) {
+    const matchParticipants = participantsByMatchId.get(asId(match._id)) ?? [];
+    for (const participant of matchParticipants) {
+      const entryId = asId(participant.eventEntryId);
+      const previous = streaks.get(entryId) ?? 0;
+      const next = isPositiveResult(participant.resultType) ? previous + 1 : 0;
+      streaks.set(entryId, next);
+    }
+  }
+
+  return streaks;
+}
+
+function sortStandingsForGameMode(rows, gameMode) {
+  if (gameMode === "COMMANDER_MULTIPLAYER") {
+    return rows.sort((left, right) => (
+      right.points - left.points ||
+      right.tb1Streak - left.tb1Streak ||
+      right.tb2OpponentAveragePoints - left.tb2OpponentAveragePoints ||
+      right.tb3OpponentAverageStreak - left.tb3OpponentAverageStreak ||
+      right.opponentMatchWinRate - left.opponentMatchWinRate ||
+      right.opponentGameWinRate - left.opponentGameWinRate ||
+      right.wins - left.wins ||
+      right.draws - left.draws ||
+      left.losses - right.losses ||
+      asId(left.playerId).localeCompare(asId(right.playerId), "pt-BR")
+    ));
+  }
+
+  return rows.sort((left, right) => (
+    right.points - left.points ||
+    right.opponentMatchWinRate - left.opponentMatchWinRate ||
+    right.gameWinRate - left.gameWinRate ||
+    right.opponentGameWinRate - left.opponentGameWinRate ||
+    right.buchholz - left.buchholz ||
+    right.wins - left.wins ||
+    right.draws - left.draws ||
+    left.losses - right.losses ||
+    asId(left.playerId).localeCompare(asId(right.playerId), "pt-BR")
+  ));
+}
+
+function buildTieBreakSummary(row, gameMode) {
+  if (gameMode === "COMMANDER_MULTIPLAYER") {
+    return `Commander TB: Points=${safeNumber(row.points)}, TB1=${safeNumber(row.tb1Streak)}, TB2=${safeNumber(row.tb2OpponentAveragePoints).toFixed(2)}, TB3=${safeNumber(row.tb3OpponentAverageStreak).toFixed(2)}, OMW%=${(safeNumber(row.opponentMatchWinRate) * 100).toFixed(1)}%, OGW%=${(safeNumber(row.opponentGameWinRate) * 100).toFixed(1)}%`;
+  }
+
+  return `Wizards TB: Points=${safeNumber(row.points)}, OMW%=${(safeNumber(row.opponentMatchWinRate) * 100).toFixed(1)}%, GW%=${(safeNumber(row.gameWinRate) * 100).toFixed(1)}%, OGW%=${(safeNumber(row.opponentGameWinRate) * 100).toFixed(1)}%`;
+}
+
+export function calculateStandings(entries, matches, participants, options = {}) {
+  const gameMode = options.gameMode ?? "ONE_VS_ONE";
   const standings = new Map();
+  const completedMatches = matches.filter((match) => match.status === "COMPLETED");
+  const completedMatchIds = new Set(completedMatches.map((match) => asId(match._id)));
+  const participantsByMatchId = new Map();
 
   for (const entry of entries) {
     standings.set(asId(entry._id), {
@@ -107,17 +194,21 @@ export function calculateStandings(entries, matches, participants) {
       losses: 0,
       draws: 0,
       byes: 0,
+      matchPointsForTiebreak: 0,
+      tiebreakMatchesPlayed: 0,
+      gamePointsForTiebreak: 0,
+      gamePointsAvailable: 0,
     });
   }
-
-  const completedMatchIds = new Set(
-    matches.filter((match) => match.status === "COMPLETED").map((match) => asId(match._id))
-  );
 
   for (const participant of participants) {
     if (!completedMatchIds.has(asId(participant.matchId))) {
       continue;
     }
+
+    const matchParticipants = participantsByMatchId.get(asId(participant.matchId)) ?? [];
+    matchParticipants.push(participant);
+    participantsByMatchId.set(asId(participant.matchId), matchParticipants);
 
     const row = standings.get(asId(participant.eventEntryId));
     if (!row) {
@@ -144,36 +235,74 @@ export function calculateStandings(entries, matches, participants) {
     }
   }
 
-  const completedMatches = matches.filter((match) => match.status === "COMPLETED");
-  const opponentMap = buildOpponentMap(completedMatches, participants);
+  const opponentEntriesMap = buildOpponentEntriesMap(completedMatches, participants);
+  const commanderStreaks = gameMode === "COMMANDER_MULTIPLAYER"
+    ? buildCommanderStreaks(completedMatches, participants)
+    : new Map();
+
+  for (const match of completedMatches) {
+    const matchParticipants = participantsByMatchId.get(asId(match._id)) ?? [];
+
+    if (matchParticipants.length === 1 && matchParticipants[0]?.resultType === "BYE") {
+      continue;
+    }
+
+    const totalScore = matchParticipants.reduce((sum, participant) => sum + safeNumber(participant.score), 0);
+    const isCommanderStyleMatch = matchParticipants.length > 2;
+    const gamePointsAvailable = isCommanderStyleMatch ? 1 : Math.max(totalScore, 1);
+
+    for (const participant of matchParticipants) {
+      const row = standings.get(asId(participant.eventEntryId));
+      if (!row) {
+        continue;
+      }
+
+      row.tiebreakMatchesPlayed += 1;
+      row.matchPointsForTiebreak += safeNumber(participant.pointsEarned);
+
+      if (isCommanderStyleMatch) {
+        const gamePoints = participant.resultType === "WIN" ? 1 : participant.resultType === "DRAW" ? 0.5 : 0;
+        row.gamePointsForTiebreak += gamePoints;
+        row.gamePointsAvailable += 1;
+      } else {
+        row.gamePointsForTiebreak += safeNumber(participant.score);
+        row.gamePointsAvailable += gamePointsAvailable;
+      }
+    }
+  }
+
   const rows = [...standings.values()].map((row) => {
-    const opponentRows = [...(opponentMap.get(asId(row.eventEntryId)) ?? new Set())]
+    const opponentRows = (opponentEntriesMap.get(asId(row.eventEntryId)) ?? [])
       .map((opponentEntryId) => standings.get(opponentEntryId))
       .filter(Boolean);
 
     const buchholz = opponentRows.reduce((sum, opponent) => sum + safeNumber(opponent.points), 0);
-    const opponentMatchWinRate = calculateOpponentMatchWinRate(opponentRows);
+    const matchWinRate = calculateMatchWinRate(row);
+    const gameWinRate = calculateGameWinRate(row);
+    const opponentMatchWinRate = calculateAverageOpponentRate(opponentRows, calculateMatchWinRate);
+    const opponentGameWinRate = calculateAverageOpponentRate(opponentRows, calculateGameWinRate);
+    const tb1Streak = commanderStreaks.get(asId(row.eventEntryId)) ?? 0;
+    const tb2OpponentAveragePoints = calculateAverageOpponentRate(opponentRows, (opponent) => safeNumber(opponent.points));
+    const tb3OpponentAverageStreak = calculateAverageOpponentRate(opponentRows, (opponent) => safeNumber(commanderStreaks.get(asId(opponent.eventEntryId)) ?? 0));
 
     return {
       ...row,
       buchholz,
+      matchWinRate,
+      gameWinRate,
       opponentMatchWinRate,
+      opponentGameWinRate,
+      tb1Streak,
+      tb2OpponentAveragePoints,
+      tb3OpponentAverageStreak,
     };
   });
 
-  return rows
-    .sort((left, right) => (
-      right.points - left.points ||
-      right.buchholz - left.buchholz ||
-      right.opponentMatchWinRate - left.opponentMatchWinRate ||
-      right.wins - left.wins ||
-      right.draws - left.draws ||
-      left.losses - right.losses ||
-      asId(left.playerId).localeCompare(asId(right.playerId), "pt-BR")
-    ))
+  return sortStandingsForGameMode(rows, gameMode)
     .map((row, index) => ({
       ...row,
       position: index + 1,
+      tieBreakSummary: buildTieBreakSummary(row, gameMode),
     }));
 }
 
@@ -207,6 +336,38 @@ function buildOpponentMap(matches, participants) {
   }
 
   return opponentMap;
+}
+
+function buildOpponentEntriesMap(matches, participants) {
+  const byMatchId = new Map();
+  for (const participant of participants) {
+    const key = asId(participant.matchId);
+    const list = byMatchId.get(key) ?? [];
+    list.push(participant);
+    byMatchId.set(key, list);
+  }
+
+  const opponentEntriesMap = new Map();
+
+  for (const match of matches) {
+    const list = byMatchId.get(asId(match._id)) ?? [];
+    if (list.length < 2) {
+      continue;
+    }
+
+    for (const participant of list) {
+      const entryId = asId(participant.eventEntryId);
+      const current = opponentEntriesMap.get(entryId) ?? [];
+      for (const opponent of list) {
+        if (asId(opponent.eventEntryId) !== entryId) {
+          current.push(asId(opponent.eventEntryId));
+        }
+      }
+      opponentEntriesMap.set(entryId, current);
+    }
+  }
+
+  return opponentEntriesMap;
 }
 
 export function generateSwissPairings(entries, previousMatches = [], previousParticipants = [], round = 1) {
@@ -337,7 +498,7 @@ export async function generateRound(eventId, round, auditContext = {}) {
       matchId: { $in: previousMatches.map((match) => match._id) },
     }).lean();
 
-    const standings = calculateStandings(entries, previousMatches, previousParticipants);
+    const standings = calculateStandings(entries, previousMatches, previousParticipants, { gameMode: event.gameMode });
     const orderedEntries = round === 1
       ? entries
       : standings
@@ -585,7 +746,8 @@ export async function getEventStandings(eventId) {
     matchId: { $in: matches.map((match) => match._id) },
   }).lean();
 
-  const standings = calculateStandings(entries, matches, participants);
+  const event = await Event.findById(eventId).lean();
+  const standings = calculateStandings(entries, matches, participants, { gameMode: event?.gameMode ?? "ONE_VS_ONE" });
 
   return standings.map((row) => {
     const entry = entries.find((item) => asId(item._id) === asId(row.eventEntryId));
