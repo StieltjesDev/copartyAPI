@@ -25,12 +25,26 @@ async function normalizeLegacyFinishedEvent(event) {
   return event;
 }
 
+async function normalizeLegacyDraftEvent(event) {
+  if (!event || event.status !== "DRAFT") {
+    return event;
+  }
+
+  const eventDate = event.dateTime instanceof Date ? event.dateTime : new Date(event.dateTime);
+  event.status = !Number.isNaN(eventDate.getTime()) && eventDate >= new Date()
+    ? "SCHEDULED"
+    : "CANCELLED";
+  await event.save();
+  return event;
+}
+
 async function persistAutoCancelledEvent(event) {
   if (!event) {
     return event;
   }
 
   event = await normalizeLegacyFinishedEvent(event);
+  event = await normalizeLegacyDraftEvent(event);
 
   if (event.status !== "SCHEDULED") {
     return event;
@@ -707,8 +721,8 @@ export async function cancelEvent(eventId, auditContext = {}) {
       throw invalidStateError("Evento ja cancelado");
     }
 
-    if (!["DRAFT", "SCHEDULED"].includes(event.status)) {
-      throw invalidStateError("Apenas eventos em rascunho ou agendados podem ser cancelados");
+    if (event.status !== "SCHEDULED") {
+      throw invalidStateError("Apenas eventos agendados podem ser cancelados");
     }
 
     const before = {
@@ -758,3 +772,5 @@ export async function getEventStandings(eventId) {
     };
   });
 }
+
+

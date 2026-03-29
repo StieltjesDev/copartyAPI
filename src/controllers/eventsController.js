@@ -105,15 +105,14 @@ export async function createEvent(req, res, next) {
       throw validationError("Data e hora invalidas");
     }
 
-    const isDraft = Boolean(req.body.isDraft);
-    if (!isDraft && dateTime < new Date()) {
+    if (dateTime < new Date()) {
       throw validationError("Evento agendado precisa ter data futura");
     }
 
     const payload = normalizeEventPayload(req.body);
     const event = new Event({
       ...payload,
-      status: isDraft ? "DRAFT" : "SCHEDULED",
+      status: "SCHEDULED",
       dateTime,
       createdByUserId: req.user.userId,
     });
@@ -234,8 +233,8 @@ export async function postEnterEvent(req, res, next) {
       throw notFoundError("Event nao encontrado");
     }
 
-    if (!['DRAFT', 'SCHEDULED'].includes(event.status)) {
-      throw validationError("Inscricoes so ficam abertas para eventos em rascunho ou agendados");
+    if (event.status !== 'SCHEDULED') {
+      throw validationError("Inscricoes so ficam abertas para eventos agendados");
     }
 
     if (event.dateTime < new Date()) {
@@ -319,7 +318,7 @@ export async function deleteLeaveEvent(req, res, next) {
       throw notFoundError("Event nao encontrado");
     }
 
-    if (!['DRAFT', 'SCHEDULED'].includes(event.status)) {
+    if (event.status !== 'SCHEDULED') {
       throw validationError("So e possivel cancelar inscricao antes do evento iniciar");
     }
 
@@ -353,8 +352,8 @@ export async function removeEventEntry(req, res, next) {
     await ensureOrganizerOrAdmin(req.user.userId, req.user.role, req.params.eventId);
 
     const event = await syncEventLifecycle(req.params.eventId);
-    if (!["DRAFT", "SCHEDULED"].includes(event.status)) {
-      throw invalidStateError("Remocao de inscricao so e permitida antes do evento iniciar");
+    if (event.status !== "SCHEDULED") {
+      throw invalidStateError("Remocao de inscricao so e permitida enquanto o evento estiver agendado");
     }
 
     const filter = {
@@ -545,6 +544,8 @@ export async function getStandings(req, res, next) {
     next(error);
   }
 }
+
+
 
 
 

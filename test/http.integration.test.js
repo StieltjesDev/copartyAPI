@@ -293,7 +293,7 @@ function setupInMemoryPersistence() {
       dateTime: this.dateTime,
       format: this.format ?? "CUSTOM",
       pairingType: this.pairingType,
-      status: this.status ?? "DRAFT",
+      status: this.status ?? "SCHEDULED",
       gameMode: this.gameMode,
       maxPlayers: this.maxPlayers ?? null,
       createdByUserId: this.createdByUserId,
@@ -1310,7 +1310,6 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
         pairingType: "ROUND_ROBIN",
         gameMode: "ONE_VS_ONE",
         maxPlayers: 8,
-        isDraft: true,
       }),
     });
     const cancellableEventId = cancellableEventResponse.data.id;
@@ -1340,7 +1339,13 @@ test("inicio, cancelamento e finalizacao de evento seguem o fluxo operacional", 
     const overdueEventId = overdueEventResponse.data.id;
     const overdueEvent = store.events.find((item) => String(item._id) === String(overdueEventId));
     overdueEvent.dateTime = "2000-01-01T10:00:00.000Z";
-    overdueEvent.status = "SCHEDULED";
+    overdueEvent.status = "DRAFT";
+
+    const overdueFetch = await request(baseUrl, `/api/events/${overdueEventId}`, {
+      headers: { cookie: organizer.cookie },
+    });
+    assert.equal(overdueFetch.response.status, 200);
+    assert.equal(overdueFetch.data.status, "CANCELLED");
 
     const overdueUpdate = await request(baseUrl, `/api/events/${overdueEventId}`, {
       method: "PUT",
@@ -1853,6 +1858,8 @@ test("organizador remove inscricao antes do inicio e drop so vale com evento em 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+
 
 
 

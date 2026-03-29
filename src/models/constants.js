@@ -26,7 +26,6 @@ export const EVENT_PAIRING_TYPES = [
 ];
 
 export const EVENT_STATUSES = [
-  "DRAFT",
   "SCHEDULED",
   "ONGOING",
   "FINISHED",
@@ -66,3 +65,4 @@ export const MATCH_RESULT_TYPES = [
 ];
 
 export const RATING_TYPES = ["PLAYER", "DECK"];
+

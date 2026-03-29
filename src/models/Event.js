@@ -36,7 +36,7 @@ const eventSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: EVENT_STATUSES,
-      default: "DRAFT",
+      default: "SCHEDULED",
     },
     gameMode: {
       type: String,
@@ -57,3 +57,4 @@ const eventSchema = new mongoose.Schema(
 );
 
 export const Event = mongoose.model("Event", eventSchema);
+
